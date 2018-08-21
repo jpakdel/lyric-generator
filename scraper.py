@@ -240,3 +240,16 @@ dictionary_scrape("stroking")
 
 def generate_lyrics():
     pass
+
+def contains(string: str, snippet: str)-> bool:
+    """check to see if string contains another string"""
+    string = string.lower()
+    snippet= snippet.lower()
+    for i, char in enumerate(string):
+        print(i)
+        if (i + len(snippet))> (len(string)):
+            return False
+        snip = string[i:i+len(snippet)]
+        print(snip)
+        if snip == snippet:
+            return True
