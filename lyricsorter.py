@@ -25,7 +25,7 @@ def get_lyrics_list():
 
 song_words = []
 def get_words(link: str):
-    """Gets words from links"""
+    """Uses a song url to look up the lyrics and get all the individual words from them"""
     response = song_table.get_item(
         Key = {
             'id': link
@@ -39,6 +39,7 @@ def get_words(link: str):
     output_list = []
     print(link)
     for item in lyric_list:
+        #Take  out the punctuation
         item = item.replace("?", "")
         item = item.replace(",", "")
         item = item.replace(".", " ")
@@ -46,23 +47,27 @@ def get_words(link: str):
         item = item.replace("-", " ")
         item = item.replace("!", "")
         item = item.lower()
-
+        
+        #We only want the line if it doesn't have numbers, and doesn't have a colon, which means its not actual lyrics
         if item not in output_list and hasNumbers(item) is False and scraper.contains(item, ":") is False:
-            #print(item)
             output_list.append(remove_paranthases(item).strip())
 
     for item in output_list:
         word_lines = item.split(" ")
-
-
-        #print(word_lines)
+        #we only want sentences with more than three words, because some of the text in the lyrics aren'tactual song lyrics
+        #and we want to avoid adding those
         if len(word_lines) > 3:
             for word in word_lines:
                 word = str(word).lower()
+                
+                #make sure we aren't adding html code
                 if len(word)>0 and scraper.contains(word, "&") is False:
                     if word[0] == '\'':
                         word = word[1:len(word)]
+                    #replace slang words with their real equivalent
                     word = slang_cleaner.clean_slang(word)
+                    
+                    #add it to our list of words in the song
                     if word not in song_words and word != ",":
                         song_words.append(word)
 
@@ -124,6 +129,7 @@ def lyric_parse(x: int, y: int):
         x +=1
     separate_words()
     insert_words()
+    
 def get_song_url_list():
     response = song_table.get_item(
         Key={
@@ -156,4 +162,4 @@ def remove_paranthases(input: str):
 def hasNumbers(inputString):
     return any(char.isdigit() for char in inputString)
 
-lyric_parse(10, 30)
+#lyric_parse(10, 30)
