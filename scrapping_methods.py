@@ -9,8 +9,7 @@ import requests
 import boto3
 import helper_methods as helper
 
-dynamodb = boto3.resource("dynamodb", region_name='us-east-1', aws_access_key_id="AKIAJNC2HXMRQQD7XVHQ",
-         aws_secret_access_key= "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")
+dynamodb = boto3.resource("dynamodb", region_name='us-east-1')
 
 proxy_table = dynamodb.Table("Proxy")
 word_table = dynamodb.Table("Word")
