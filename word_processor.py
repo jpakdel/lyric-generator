@@ -138,7 +138,28 @@ def find_nonviable_words():
 
     print(non_viable_words)
     print(nonviableset)
+    
+def find_viable_words():
+    response = get_word_list()
+    word_list = response[0]
+    word_dict = response[1]
+    viableset = []
+    viable_words = 0
 
+    numa = 0
+    for word in word_list:
+        # print(word)
+        # print(word_dict['songs'])
+        # print(word_dict[word]['num_occurrences'])
+        if  word_dict[word]['num_occurrences'] > 1:
+            viable_words += 1
+            viableset.append(word)
+        else:
+            pass
+
+    print(viable_words)
+    print(viableset)
+    
 def find_word(words):
     song_urls = get_song_url_list()
     for link in song_urls:
@@ -256,4 +277,34 @@ word_fixes = {
     "gwaluh": "guala",
     "deers": "deer",
 }
-find_word(nonviable_words)
+def replace_words(words):
+    song_urls = get_song_url_list()
+    for link in song_urls:
+        response = song_table.get_item(
+            Key={
+                'id': link
+            }
+        )
+        lyrics = []
+        try:
+            lyrics = response['Item']['lyric_array']
+        except KeyError:
+            pass
+        for line in lyrics:
+            for w in line:
+                if w in words:
+                    fix = words[w]
+                    response = word_table.get_item(
+                        Key = {
+                            id: fix
+                        }
+                    )
+                    if 'Item' in response:
+                        num_occurrences = response["Item"]['num_occurrences']
+                        print(line)
+                        # scraper.update_table(word_table, fix, "num_occurrences", (num_occurrences+1))
+                        w = fix
+                        print(line)
+                        # scraper.update_table(song_table, link, "lyric_array", lyrics)
+
+replace_words(word_fixes)
