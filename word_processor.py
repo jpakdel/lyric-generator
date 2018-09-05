@@ -307,4 +307,3 @@ def replace_words(words):
                         print(line)
                         # scraper.update_table(song_table, link, "lyric_array", lyrics)
 
-replace_words(word_fixes)
