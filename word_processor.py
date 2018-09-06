@@ -2,10 +2,12 @@ import lyricsorter
 import slang_cleaner
 import scraper
 import boto3
+import random
 from lyricsorter import get_song_url_list, hasNumbers, remove_paranthases
 dynamodb = boto3.resource("dynamodb")
 proxy_table = dynamodb.Table("Proxy")
 word_table = dynamodb.Table("Word")
+word_relation_table = dynamodb.Table("WordRelation")
 song_table = dynamodb.Table("Song")
 
 
@@ -18,18 +20,14 @@ def get_word_list():
     i = 0
     for item in raw_words:
         word_list.append(str(item.get("id")))
-
-
-
         try:
-            scraper.update_table(word_table, str(item.get("id")), "songs", len(item['songs']))
+            #scraper.update_table(word_table, str(item.get("id")), "songs", len(item['songs']))
             word_dict_unsorted[str(item.get("id"))] = {"num_occurrences": int(item['num_occurrences']),
-                                                       "num_songs": len(item['songs']), "slang": item['slang']}
-            print(len(item['songs']))
-            print(str(item.get("id")))
+                                                        "slang": item['slang']}
+
         except TypeError:
             word_dict_unsorted[str(item.get("id"))] = {"num_occurrences": int(item['num_occurrences']),
-                                                       "num_songs": item['songs'], "slang": item['slang']}
+                                                        "slang": item['slang']}
             pass
     word_list = sorted(word_list)
 
@@ -103,7 +101,7 @@ def fill_word_dict(x: int, y: int):
         print(word)
         scraper.update_table(word_table, word, "num_occurrences", int(word_dict[word]["num_occurrences"]))
         scraper.update_table(word_table, word, "slang", word_dict[word]["slang"])
-        scraper.update_table(word_table, word, "songs", word_dict[word]["songs"])
+
 
 def setup_word_table():
     """Initializes the number of occurrences, songs words are found in, and slang deriviatives of all the words in the
@@ -115,6 +113,18 @@ def setup_word_table():
         scraper.update_table(word_table, word, "num_occurrences", 0 )
         scraper.update_table(word_table, word, "slang", [])
         scraper.update_table(word_table, word, "songs", [])
+
+def reformat_word_table():
+    """removes song attribute from all the words"""
+    raw_words = list(word_table.scan()['Items'])
+
+    for word in raw_words:
+        Item = {'id': word['id'], 'num_occurrences': word['num_occurrences'], 'slang': word['slang']}
+        word_table.put_item(
+            Item=Item
+        )
+        print(Item)
+
 
 def find_nonviable_words():
     response = get_word_list()
@@ -136,9 +146,8 @@ def find_nonviable_words():
 
 
 
-    print(non_viable_words)
-    print(nonviableset)
-    
+    return(nonviableset)
+
 def find_viable_words():
     response = get_word_list()
     word_list = response[0]
@@ -156,10 +165,9 @@ def find_viable_words():
             viableset.append(word)
         else:
             pass
+    return(viableset)
 
-    print(viable_words)
-    print(viableset)
-    
+
 def find_word(words):
     song_urls = get_song_url_list()
     for link in song_urls:
@@ -276,6 +284,7 @@ word_fixes = {
     "jetskis": "skis",
     "gwaluh": "guala",
     "deers": "deer",
+    "aah": "ah"
 }
 def replace_words(words):
     song_urls = get_song_url_list()
@@ -291,19 +300,288 @@ def replace_words(words):
         except KeyError:
             pass
         for line in lyrics:
-            for w in line:
+            for index, w in enumerate(line):
+
                 if w in words:
+                    print(w)
                     fix = words[w]
+                    print(fix)
                     response = word_table.get_item(
                         Key = {
-                            id: fix
+                            'id': fix
                         }
                     )
                     if 'Item' in response:
                         num_occurrences = response["Item"]['num_occurrences']
+                        print(link)
                         print(line)
-                        # scraper.update_table(word_table, fix, "num_occurrences", (num_occurrences+1))
-                        w = fix
+                        scraper.update_table(word_table, fix, "num_occurrences", (num_occurrences+1))
+                        line[index] = fix
                         print(line)
-                        # scraper.update_table(song_table, link, "lyric_array", lyrics)
+                        scraper.update_table(song_table, link, "lyric_array", lyrics)
 
+def create_last_word_dict():
+    song_urls = get_song_url_list()
+    word_list = []
+    word_dict = {}
+    Item = {}
+    Item['id'] = "last_words"
+    Item['words'] = {}
+    for link in song_urls:
+        response = song_table.get_item(
+            Key={
+                'id': link
+            }
+        )
+        lyrics = []
+        try:
+            lyrics = response['Item']['lyric_array']
+        except KeyError:
+            pass
+        for line in lyrics:
+            if len(line) > 2:
+                last_word = line[len(line)-1]
+                print(line)
+                if last_word not in word_list:
+                    word_list.append(last_word)
+                if last_word not in word_dict:
+                    word_dict[last_word] = 1
+                else:
+                    word_dict[last_word] = word_dict[last_word] + 1
+
+    viable_words = find_viable_words()
+    for word in sorted(word_list):
+        if word in viable_words:
+            Item['words'][word] = word_dict[word]
+    word_relation_table.put_item(
+        Item=Item
+    )
+
+    print(Item)
+
+def choose_last_word():
+    response = word_relation_table.get_item(
+        Key = {
+            'id': "last_words"
+        }
+    )
+    last_words = dict(response['Item']['words'])
+    total = 26124
+    randint = random.randint(0,total)
+
+    sum = 0
+    for word in last_words:
+        sum += last_words[word]
+        if sum >= randint:
+            return word
+
+def probability_roll(dictionary: dict):
+    sum = 0
+    word_list = []
+    for item in dictionary:
+        word_list.append(item)
+        sum+=int(dictionary[item])
+    randint = random.randint(1, sum)
+    dice = 0
+    #print("randint: {}".format(randint))
+    for word in word_list:
+        dice+=int(dictionary[word])
+        #print(dice)
+        if dice >= randint:
+            return word
+def build_word_relations():
+    song_urls = get_song_url_list()
+    viablewords = find_viable_words()
+    word_list = []
+    relation_dict = {}
+
+    for link in song_urls:
+        response = song_table.get_item(
+            Key={
+                'id': link
+            }
+        )
+        lyrics = []
+        try:
+            lyrics = response['Item']['lyric_array']
+        except KeyError:
+            pass
+        for index, line in enumerate(lyrics):
+            for index2, w in enumerate(line):
+                if w not in viablewords:
+                    lyrics[index][index2] = ""
+        for index, line in enumerate(lyrics):
+            for index2, w in enumerate(line):
+                line_parse(index2, line, relation_dict, word_list)
+
+    for word in word_list:
+        Item1 = {
+            'id': str(word+"_1"),
+            "words": relation_dict[word][str(word+"_1")]
+        }
+        Item2 = {
+            'id': str(word + "_2"),
+            "words": relation_dict[word][str(word+"_2")]
+        }
+        Item3 = {
+            'id': str(word + "_3"),
+            "words": relation_dict[word][str(word+"_3")]
+        }
+        word_relation_table.put_item(
+            Item = Item1
+        )
+        word_relation_table.put_item(
+            Item=Item2
+        )
+        word_relation_table.put_item(
+            Item=Item3
+        )
+
+def line_parse(index: int, line: list, dictionary: dict, word_list: list):
+    if index + 2 >= len(line):
+        return
+    word_1 = line[index + 2]
+    word_2 = line[index + 1]
+    word_3 = line[index]
+
+    if word_1 == "" or word_2 == "" or word_3 == "":
+        return
+
+    if word_1 not in dictionary:
+        dictionary[word_1] = {
+            str(word_1 + "_1"): {
+
+            },
+            str(word_1 + "_2"): {
+
+            },
+            str(word_1 + "_3"): {
+
+            }
+        }
+    if word_2 not in dictionary:
+        dictionary[word_2] = {
+            str(word_2 + "_1"): {
+
+            },
+            str(word_2 + "_2"): {
+
+            },
+            str(word_2 + "_3"): {
+
+            }
+        }
+    if word_3 not in dictionary:
+        dictionary[word_3] = {
+            str(word_3 + "_1"): {
+
+            },
+            str(word_3 + "_2"): {
+
+            },
+            str(word_3 + "_3"): {
+
+            }
+        }
+    if word_1 not in word_list:
+        word_list.append(word_1)
+    if word_2 not in word_list:
+        word_list.append(word_2)
+    if word_3 not in word_list:
+        word_list.append(word_3)
+    """         word_3       word_2     word_1"""
+    if word_2 not in dictionary[word_1][str(word_1 + "_1")]:
+        dictionary[word_1][str(word_1 + "_1")][word_2] = 1
+    else:
+        dictionary[word_1][str(word_1 + "_1")][word_2] =dictionary[word_1][str(word_1 + "_1")][word_2]+1
+    if word_3 not in dictionary[word_1][str(word_1 + "_2")]:
+        dictionary[word_1][str(word_1 + "_2")][word_3] = 1
+    else:
+        dictionary[word_1][str(word_1 + "_2")][word_3] =dictionary[word_1][str(word_1 + "_2")][word_3]+1
+    if word_3 not in dictionary[word_2][str(word_2 + "_1")]:
+        dictionary[word_2][str(word_2 + "_1")][word_3] = 1
+    else:
+        dictionary[word_2][str(word_2 + "_1")][word_3] = dictionary[word_2][str(word_2 + "_1")][word_3]+1
+    if index + 3 >= len(line) or line[index+3] == "":
+        return
+    word_0 = line[index+3]
+    if word_0 not in dictionary:
+        dictionary[word_0] = {
+            str(word_0 + "_1"): {
+
+            },
+            str(word_0 + "_2"): {
+
+            },
+            str(word_0 + "_3"): {
+
+            }
+        }
+    if word_0 not in word_list:
+        word_list.append(word_0)
+    if word_3 not in dictionary[word_0][str(word_0 + "_3")]:
+        dictionary[word_0][str(word_0 + "_3")][word_3] = 1
+    else:
+        dictionary[word_0][str(word_0 + "_3")][word_3] = dictionary[word_0][str(word_0 + "_3")][word_3]+1
+
+def check_exists(id):
+    response = word_relation_table.get_item(
+        Key={
+            "id": id
+        }
+    )
+    if 'Item' in response:
+        print(id + " exists")
+        return True
+    else:
+        print(id + " doesn't exist")
+        return False
+
+def get_relation_dict(word: str, num: int):
+    response = word_relation_table.get_item(
+        Key = {
+            "id": str(word+"_"+str(num))
+        }
+    )
+    return dict(response['Item']['words'])
+
+def find_union(dicts: list):
+    union_list = []
+    base_words = []
+    for d in dicts:
+        for word in d:
+            if word not in base_words:
+                base_words.append(word)
+            elif word in base_words and word not in union_list:
+                union_list.append(word)
+    return(union_list)
+
+
+def build_sentence(length: int):
+    last_word = choose_last_word()
+    sentence = []
+    i = 0
+    while i < length:
+        sentence.append("")
+        i += 1
+    sentence[length-1] = last_word
+    a = get_relation_dict(last_word, 1)
+    #print(a)
+    second_to_last_word = probability_roll(a)
+    print(second_to_last_word)
+    sentence[length - 2] = second_to_last_word
+    i = length-3
+    while i>=0:
+        word_1=sentence[i+2]
+        word_2 =sentence[i+1]
+        prev_words_1 = get_relation_dict(word_1, 2)
+        prev_words_2 = get_relation_dict(word_2, 1)
+        potential_words = find_union([prev_words_1, prev_words_2])
+        try:
+            sentence[i] = random.choice(potential_words)
+        except IndexError:
+            sentence[i]=probability_roll(prev_words_2)
+        i-=1
+    print(sentence)
+
+build_sentence(3)
