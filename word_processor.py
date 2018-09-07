@@ -548,12 +548,17 @@ def get_relation_dict(word: str, num: int):
 def find_union(dicts: list):
     union_list = []
     base_words = []
+    word_count = {}
     for d in dicts:
         for word in d:
-            if word not in base_words:
-                base_words.append(word)
-            elif word in base_words and word not in union_list:
-                union_list.append(word)
+            if word not in word_count:
+                word_count[word] = 1
+            else:
+                word_count[word]=word_count[word]+1
+    for item in word_count:
+        if word_count[item] == len(dicts):
+            union_list.append(item)
+
     return(union_list)
 
 
@@ -574,14 +579,95 @@ def build_sentence(length: int):
     while i>=0:
         word_1=sentence[i+2]
         word_2 =sentence[i+1]
-        prev_words_1 = get_relation_dict(word_1, 2)
-        prev_words_2 = get_relation_dict(word_2, 1)
-        potential_words = find_union([prev_words_1, prev_words_2])
+
+        #words 2 steps away and one step away respectively
+        prev_words_2 = get_relation_dict(word_1, 2)
+        prev_words_1 = get_relation_dict(word_2, 1)
+        prev_word_list = [prev_words_1, prev_words_2]
+
+        if(i+3)<length:
+            word_0 = sentence[i+3]
+            prev_words_3 = get_relation_dict(word_0, 3)
+            prev_word_list.append(prev_words_3)
+
+
         try:
+            potential_words = find_union(prev_word_list)
+
             sentence[i] = random.choice(potential_words)
+            print("Union of {} spaces".format(str(len(prev_word_list))))
         except IndexError:
-            sentence[i]=probability_roll(prev_words_2)
+
+
+            sentence[i]=probability_roll(prev_words_1)
+            print("Dice  Roll")
         i-=1
     print(sentence)
 
-build_sentence(3)
+
+
+
+def line_parse_4(index: int, line: list, dictionary: dict, word_list: list):
+    if index + 4 >= len(line):
+        return
+    word_1 = line[index + 4]
+    word_2 = line[index + 3]
+    word_3 = line[index+2]
+    word_4 = line[index + 1]
+    word_5 = line[index]
+
+    if word_1 == "" or word_2 == "" or word_3 == "" or word_4 == "" or word_5 == "":
+        return
+
+    if word_1 not in dictionary:
+        dictionary[word_1] = {
+            str(word_1 + "_4"): {
+
+            }
+        }
+    if word_1 not in word_list:
+        word_list.append(word_1)
+
+    """word_5     word_4     word_3      word_2     word_1"""
+    if word_5 not in dictionary[word_1][str(word_1 + "_4")]:
+        dictionary[word_1][str(word_1 + "_4")][word_5] = 1
+    else:
+        dictionary[word_1][str(word_1 + "_4")][word_5] =dictionary[word_1][str(word_1 + "_4")][word_5]+1
+
+def build_word_relations_4():
+    song_urls = get_song_url_list()
+    viablewords = find_viable_words()
+    word_list = []
+    relation_dict = {}
+
+    for link in song_urls:
+        print(link)
+        response = song_table.get_item(
+            Key={
+                'id': link
+            }
+        )
+        lyrics = []
+        try:
+            lyrics = response['Item']['lyric_array']
+        except KeyError:
+            pass
+        for index, line in enumerate(lyrics):
+            for index2, w in enumerate(line):
+                if w not in viablewords:
+                    lyrics[index][index2] = ""
+        for index, line in enumerate(lyrics):
+            for index2, w in enumerate(line):
+                line_parse_4(index2, line, relation_dict, word_list)
+    print(len(word_list))
+    for word in word_list:
+        Item = {
+            'id': str(word + "_4"),
+            "words": relation_dict[word][str(word + "_4")]
+        }
+        word_relation_table.put_item(
+            Item=Item
+        )
+        print("added {}".format(word))
+
+
