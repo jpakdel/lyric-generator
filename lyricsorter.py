@@ -1,9 +1,10 @@
 from bs4 import BeautifulSoup
 import requests
 import boto3
-import random
+import helper_methods
 import scraper
 import slang_cleaner
+from botocore.exceptions import ClientError
 from PyDictionary import PyDictionary
 
 dynamodb = boto3.resource("dynamodb")
@@ -41,6 +42,8 @@ def get_words(link: str):
     lyric_list = lyrics.split("\n")
 
     output_list = []
+    output_list2 =[]
+    i = 0
     print(link)
     for item in lyric_list:
         # Take  out the punctuation
@@ -55,8 +58,10 @@ def get_words(link: str):
         # We only want the line if it doesn't have numbers, and doesn't have a colon, which means its not actual lyrics
         if item not in output_list and hasNumbers(item) is False and scraper.contains(item, ":") is False:
             output_list.append(remove_paranthases(item).strip())
+            output_list2.append([])
 
     for item in output_list:
+
         word_lines = item.split(" ")
         # we only want sentences with more than three words, because some of the text in the lyrics aren'tactual song lyrics
         # and we want to avoid adding those
@@ -73,13 +78,15 @@ def get_words(link: str):
                     word = slang_cleaner.remove_weirdness(word)
                     word = slang_cleaner.clean_misspellings(word)
                     word = slang_cleaner.clean_slang(word)
-
+                    output_list2[i].append(word)
                     # add it to our list of words in the song
                     if word not in song_words and word != ",":
                         song_words.append(word)
-
-
-
+        i += 1
+    try:
+        helper_methods.update_table(song_table, link, "lyric_array", output_list2)
+    except ClientError:
+        pass
 
 slang_words = []
 proper_words = []
@@ -114,7 +121,7 @@ def insert_words():
     for word in slang_words:
         if word not in dynamo_slang_words:
             dynamo_slang_words.append(word)
-    scraper.update_table(word_table, "slang_words", "words", sorted(dynamo_slang_words))
+    helper_methods.update_table(word_table, "slang_words", "words", sorted(dynamo_slang_words))
 
 
 def lyric_parse(x: int, y: int):
@@ -132,8 +139,8 @@ def lyric_parse(x: int, y: int):
         song_url = song_urls[x]
         get_words(song_url)
         x += 1
-    separate_words()
-    insert_words()
+    #separate_words()
+    #insert_words()
 
 
 def get_song_url_list():
@@ -154,9 +161,7 @@ def get_song_url_list():
 
     return (song_url_list)
 
-
 sentences = []
-
 
 def remove_paranthases(input: str):
     output = ""
@@ -174,4 +179,4 @@ def remove_paranthases(input: str):
 def hasNumbers(inputString):
     return any(char.isdigit() for char in inputString)
 
-#lyric_parse(750, 900)
+
