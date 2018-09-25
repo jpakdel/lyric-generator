@@ -15,6 +15,7 @@ dynamodb = boto3.resource("dynamodb", region_name='us-east-1')
 proxy_table = dynamodb.Table("Proxy")
 word_table = dynamodb.Table("Word")
 song_table = dynamodb.Table("Song")
+word_relation_table = dynamodb.Table("WordRelation")
 
 
 def get_proxy():
@@ -63,6 +64,14 @@ def get_word():
     
     return list(word_table.scan()['Items'])   
 
+def get_word_relation():
+    """
+    Looks up a random proxy from DynamoDB table and returns it
+    :returns array of two strings, IP and port:
+    """
+    
+    return list(word_relation_table.scan()['Items']) 
+
 def phonetic_clean(word:str):
     
     """
@@ -84,7 +93,11 @@ def phonetic_clean(word:str):
         counter += 1
     return modified_word
   
-def update_next_stop(raw_phonetic, next_stop, i):
+def __update_next_stop(raw_phonetic, next_stop, i):
+    
+    """This function is a minor helper function to deal with some exceptions 
+    in the html scrapping. It corrects cases in which the phonetic of a word 
+    has sylables separated by "," and "-" """
     
     next_stop_updated = next_stop
     next_1 = raw_phonetic[i+2:next_stop-1].find("-")
@@ -103,7 +116,7 @@ def update_next_stop(raw_phonetic, next_stop, i):
         
     return [raw_phonetic, next_stop_updated]
 
-def phonetic_scrape_helper(word:str, word_scraped:str):
+def __phonetic_scrape_helper(word:str, word_scraped:str):
 
     start_index = (word.find(word_scraped),word_scraped.find(word))
     append_where = 0 
@@ -132,5 +145,3 @@ def phonetic_scrape_helper(word:str, word_scraped:str):
     if start_index == (-1,-1):
         return (-1, append_where)
     
-
-
