@@ -64,7 +64,8 @@ def get_proxy():
         }
     )
     item = response['Item']
-    proxy_response = [item["ip"], item["port"]]
+    proxy_response = "http://" + str(item["ip"]) + ":" + item["port"] + "/"
+    #proxy_response = [item["ip"], item["port"]]
     return proxy_response
 
 def update_table(table, id: str, key: str, value: str):
@@ -84,114 +85,6 @@ def update_table(table, id: str, key: str, value: str):
     return
 
 word_dict = []
-
-def dictionary_scrape(word: str):
-    """
-    This function scrapes definitions from dictionary.com to find the part of speech of a word and inserts it into
-    DynamoDB word table.
-    :param link, url that we scrape:
-    """
-    if word[len(word)-3:len(word)] == "ings":
-        print("ing")
-    else:
-        link = "https://www.dictionary.com/browse/{}?s=t".format(word)
-        script = requests.get(link)
-        soup = BeautifulSoup(script.content, 'html.parser')
-        if soup == "" or soup == None:
-            print("Using proxy")
-            proxy = get_proxy()
-            script = requests.get(link, proxies={"http": proxy})
-            soup = BeautifulSoup(script.content, 'html.parser')
-            print(soup.prettify())
-        try:
-            part_of_speech = str(list(soup.findAll('span', {'class': "luna-pos"}))[0])
-            part_of_speech = part_of_speech.replace("<span class=\"luna-pos\">", "")[0]
-            print("{} is a {}".format(word, part_of_speech))
-            # word_table.put_item(
-            #     Item={
-            #         'id': word,
-            #         'part_of_speech': part_of_speech
-            #     }
-            # )
-        except IndexError:
-            print("{} was not found".format(word))
-
-
-def genius_scrape(link: str):
-    """
-    This function scrapes definitions from dictionary.com to find the part of speech of a word and inserts it into
-    DynamoDB word table.
-    :param link, url that we scrape:
-    """
-    script = requests.get(link)
-    soup = BeautifulSoup(script.content, 'html.parser')
-    if soup == "" or soup == None:
-        print("Using proxy")
-        proxy = get_proxy()
-        script = requests.get(link, proxies={"http": proxy})
-        soup = BeautifulSoup(script.content, 'html.parser')
-    genius_html_list = soup.findAll('meta')
-    total_lyrics =[" ", " "]
-    for item in genius_html_list:
-        blob = str(item)
-        #print(blob)
-        sample = ""
-        found_lyrics = False
-        index = 0
-        while index < len(blob):
-            c = blob[index]
-            if index + 6 < len(blob) and blob[index:index+6].lower() == "chorus":
-                found_lyrics = True
-            elif index + 5 < len(blob) and blob[index:index+5].lower() == "verse":
-                found_lyrics = True
-            elif index + 4 < len(blob) and blob[index:index+4].lower() == "href":
-                found_lyrics = False
-            elif index + 4 < len(blob) and blob[index:index+4].lower() == "\\n\\n":
-                found_lyrics = False
-                index +=3
-            if found_lyrics:
-                sample += c
-            index += 1
-        sample = sample.strip()
-        if sample!= "":
-            sample = lyrics_clean(sample)
-            if len(total_lyrics[0]) < len(sample[0]):
-                total_lyrics[0] = sample[0]
-            if len(total_lyrics[1]) < len(sample[1]):
-                total_lyrics[1] = sample[1]
-    print("Verse")
-    print(total_lyrics[0])
-    print("Chorus")
-    print(total_lyrics[1])
-    insert_song(link, total_lyrics)
-def lyrics_clean(blob):
-    chorus = False
-    verse = False
-    index = 0
-    chorus_string = ""
-    verse_string = ""
-    found_lyrics = False
-    for index, val in enumerate(blob):
-        if index + 6 < len(blob) and blob[index:index + 6].lower() == "chorus":
-            chorus = True
-            verse = False
-            found_lyrics = False
-        elif index + 5 < len(blob) and blob[index:index + 5].lower() == "verse":
-            verse = True
-            chorus = False
-            found_lyrics = False
-        if val == "&" or val == "(":
-            found_lyrics = False
-        if index + 2 < len(blob) and blob[index:index + 2].lower() == "\\n":
-            found_lyrics = True
-        if found_lyrics and chorus:
-            chorus_string += val
-        if found_lyrics and verse:
-            verse_string += val
-    verse_string = verse_string.replace("\\n", "$")
-    chorus_string = chorus_string.replace("\\n", "$")
-    chorus_string = chorus_string.split('[')[0]
-    return [verse_string, chorus_string]
 
 def insert_song(link, lyrics):
     """First we update the number of items in the table, then we add an index for which number entry the link is,
@@ -216,40 +109,137 @@ def insert_song(link, lyrics):
         }
     )
     map = response['Item']
-    print(map)
+    response = song_table.get_item(
+        Key={
+            'id': "map_2"
+        }
+    )
+    map_2 = response['Item']
+
     try:
         url_list = list(map['url_list'])
         num_items = len(url_list) + 1
-        url_list.append(link)
+        url_list_2 = list(map_2['url_list'])
+        num_items += len(url_list_2) + 1
+        url_list_2.append(link)
         print("{} is the #{} item in the song table".format(link, str(num_items)))
 
-        update_table(song_table, "map", "url_list", url_list)
+        update_table(song_table, "map_2", "url_list", url_list_2)
 
         song_table.put_item(
             Item={
                 'id': link,
-                'chorus': lyrics[1],
-                'verse': lyrics[0]
+                'lyrics': lyrics
             }
         )
     except KeyError:
         print("Key Error")
     pass
 
-dictionary_scrape("stroking")
-
-def generate_lyrics():
-    pass
-
 def contains(string: str, snippet: str)-> bool:
     """check to see if string contains another string"""
     string = string.lower()
+    #string)
     snippet= snippet.lower()
+    if len(snippet) == 1:
+        for i in string:
+            if i == snippet:
+                return True
+        return False
+    #print(snippet)
     for i, char in enumerate(string):
-        print(i)
         if (i + len(snippet))> (len(string)):
             return False
         snip = string[i:i+len(snippet)]
-        print(snip)
         if snip == snippet:
             return True
+
+
+def az_lyric_scrape(link: str):
+    """
+    This function scrapes definitions from dictionary.com to find the part of speech of a word and inserts it into
+    DynamoDB word table.
+    :param link, url that we scrape:
+    """
+    worked = False
+    while worked is False:
+        try:
+            print("Using proxy")
+            proxy = get_proxy()
+            # proxy = "http://" + "35.233.225.185" + ":8080/"
+            script = requests.get(link, proxies={"https": proxy, })
+            soup = BeautifulSoup(script.content, 'html.parser')
+            worked = True
+        except requests.exceptions.ConnectionError:
+            worked = False
+            pass
+    html_lines = str(soup.prettify())
+    line = ""
+    found_lyrics = False
+    viable_lyric = False
+
+    #used to make sure we don't take the introduction from songs, we only want lyrics
+    intro_counter = 0
+    lyrics= ""
+    for c in html_lines:
+        line+=c
+
+        if c == "\n":
+            #print(line)
+            line = line.strip()
+            print(line)
+            if contains(line, "(") or line[0] == "<" or contains(line, "["):
+                viable_lyric = False
+            else:
+                viable_lyric = True
+            if found_lyrics and viable_lyric and intro_counter > 1 and len(line) > 0:
+                lyrics+=line
+                lyrics += "\n"
+            if contains(line, "</p>") or contains(line, "[Intro"):
+                found_lyrics = False
+            if contains(line, "\"verse\""):
+                intro_counter +=1
+                found_lyrics = True
+
+            line = ""
+    lyrics=lyrics.strip()
+    print(lyrics)
+
+    if len(lyrics)>0:
+        insert_song(link, lyrics)
+
+def az_url_scrape(link: str):
+    """
+    This function scrapes definitions from dictionary.com to find the part of speech of a word and inserts it into
+    DynamoDB word table.
+    :param link, url that we scrape:
+    """
+    worked = False
+    while worked is False:
+        try:
+            print("Using proxy")
+            proxy = get_proxy()
+            #proxy = "http://" + "35.233.225.185" + ":8080/"
+            script = requests.get(link, proxies={"https": proxy,})
+            soup = BeautifulSoup(script.content, 'html.parser')
+            worked = True
+        except requests.exceptions.ConnectionError:
+            worked = False
+            pass
+    html_lines = str(soup.prettify())
+    line = ""
+    found_lyrics = False
+    viable_lyric = False
+
+    #used to make sure we don't take the introduction from songs, we only want lyrics
+    intro_counter = 0
+    url_list = []
+    for c in html_lines:
+        if c == "\n" or c == "\"":
+            if contains(line, ".html") and contains(line, "-lyrics-") and line[len(line) - 4:] == "html" and contains(line, "explicit") is False and contains(line, "remix") is False:
+                url_list.append(line)
+            line = ""
+        else:
+            line += c
+    for item in url_list:
+        az_lyric_scrape(item)
