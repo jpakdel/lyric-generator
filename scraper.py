@@ -2,7 +2,7 @@ from bs4 import BeautifulSoup
 import requests
 import boto3
 import random
-
+import helper_methods
 dynamodb = boto3.resource("dynamodb")
 proxy_table = dynamodb.Table("Proxy")
 word_table = dynamodb.Table("Word")
@@ -68,22 +68,6 @@ def get_proxy():
     #proxy_response = [item["ip"], item["port"]]
     return proxy_response
 
-def update_table(table, id: str, key: str, value: str):
-    """Updates user table
-    Args: table is the table we are updating, id is the id of the item we are updating, key is the attribute name, and
-    value is the attribute value.
-    """
-    table.update_item(
-        Key={
-            'id': id,
-        },
-        UpdateExpression='SET ' + key + ' = :val1',
-        ExpressionAttributeValues={
-            ':val1': value
-        }
-    )
-    return
-
 word_dict = []
 
 def insert_song(link, lyrics):
@@ -102,29 +86,21 @@ def insert_song(link, lyrics):
     if 'Item' in response:
         print("{} already exists in song table".format(link))
         return
-
+    map_name = get_current_map()
     response = song_table.get_item(
         Key={
-            'id': "map"
+            'id': map_name
         }
     )
     map = response['Item']
-    response = song_table.get_item(
-        Key={
-            'id': "map_2"
-        }
-    )
-    map_2 = response['Item']
 
     try:
         url_list = list(map['url_list'])
         num_items = len(url_list) + 1
-        url_list_2 = list(map_2['url_list'])
-        num_items += len(url_list_2) + 1
-        url_list_2.append(link)
+        url_list.append(link)
         print("{} is the #{} item in the song table".format(link, str(num_items)))
 
-        update_table(song_table, "map_2", "url_list", url_list_2)
+        helper_methods.update_table(song_table, map_name, "url_list", url_list)
 
         song_table.put_item(
             Item={
@@ -135,6 +111,35 @@ def insert_song(link, lyrics):
     except KeyError:
         print("Key Error")
     pass
+
+def get_current_map():
+    response = song_table.get_item(
+        Key={
+            'id': "mapmap"
+        }
+    )
+    maps = list(response['Item']['map_list'])
+    last_map =  maps[len(maps)-1]
+    response = song_table.get_item(
+        Key={
+            'id': last_map
+        }
+    )
+    current_song_urls = list(response['Item']['url_list'])
+    if len(current_song_urls) < 400:
+        return last_map
+    else:
+        new_map = "map_" + str(len(maps)+1)
+        maps.append(new_map)
+        helper_methods.update_table(song_table, "mapmap", "map_list", maps)
+        song_table.put_item(
+            Item={
+                'id': new_map,
+                "url_list": []
+            }
+        )
+        return new_map
+
 
 def contains(string: str, snippet: str)-> bool:
     """check to see if string contains another string"""
@@ -207,7 +212,8 @@ def metro_lyric_scrape(link: str):
 
 def metro_url_scrape(link: str):
     """
-    This function scrapes song urls from an artist page on metrolyrics.com and calls metro_lyric_scrape for
+    This function scrapes song urls from an artist page on metrolyrics.com and calls metro_lyric_scrape for each song
+    on their artist page
     :param link, url that we scrape:
     """
     worked = False
@@ -235,4 +241,3 @@ def metro_url_scrape(link: str):
             line += c
     for item in url_list:
         metro_lyric_scrape(item)
-
