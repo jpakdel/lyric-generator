@@ -224,37 +224,6 @@ def phonetic_rhyme(word:str, all_phonetics, thresh = 10, alliteration = False):
 
     return matches
 
-def rhyme_list(word:str, all_phonetics, thresh = 10, alliteration = False):
-
-    #get phonetic and metaphone of word to be compared
-    info = helper.get_by_id(word, word_relation_table)
-    word_info = [info['id'], info['phonetic'], met.doublemetaphone(info['id'])[0]]
-    print(word_info[1])
-    matches = []
-
-    # Compare distance between input word and all other viable words
-    for i in range(len(all_phonetics)):
-
-        current_word = all_phonetics[i]
-
-        #only compares words that differ and long enough words
-        if word_info[0] != current_word[0] and len(current_word[0]) > 3:
-
-            phon_dist = rdist.phonetic_dist(word_info[1], current_word[1], alliteration)
-            metaphone_dist = rdist.metaphone_dist(word_info[2], current_word[2], alliteration)
-
-            # while matches is not full, populate list
-            if len(matches) < thresh:
-                matches.append({"word": current_word[0], "d": phon_dist + metaphone_dist*0.5, "Phon": current_word[1]})
-            else:
-                if matches[thresh-1]["d"] > phon_dist:
-                    matches[thresh-1] = {"word": current_word[0], "d": phon_dist + metaphone_dist*0.5, "Phon": current_word[1]}
-
-
-        matches = sorted(matches, key=lambda k: k['d'])
-
-    return matches
-
 
 def get_all_phonetic_array():
     # I have this option set to true because I already saved it in JSON
