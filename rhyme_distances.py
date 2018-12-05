@@ -254,6 +254,39 @@ def rhyme_list(word:str, all_phonetics, thresh = 10, alliteration = False):
         matches = sorted(matches, key=lambda k: k['d'])
 
     return matches
+
+
+def get_all_phonetic_array():
+    # I have this option set to true because I already saved it in JSON
+    option_json = True
+    if option_json:
+        with open('rap_phonetic_array.json', 'r') as f:
+            corpus = json.load(f)
+            return corpus['phonetics']
+    viable_words = wp.find_viable_words()
+    print(len(viable_words))
+    dic = []
+
+    # This is the part of the code that executed once and saved it as a variable
+
+    for i in range(len(viable_words)):
+        print(i)
+
+        try:
+            entry = helper.get_by_id(viable_words[i], word_relation_table)
+            dic.append((entry['id'], entry['phonetic'], met.doublemetaphone(entry['id'])[0]))
+
+        except KeyError:
+            print('item not found')
+
+    phonetic_array = {
+        "phonetics": dic
+    }
+    with open('rap_phonetic_array.json', 'w') as outfile:
+        json.dump(phonetic_array, outfile, indent = 4)
+    pass
+    return dic
+
 # This is the old version of method
 """
 def rhyme_degree(phonetic_1, phonetic_2):
