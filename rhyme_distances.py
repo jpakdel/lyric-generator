@@ -45,7 +45,9 @@ def edit_dist(a, b):
         return len(b)
     if b == "":
         return len(a)
-    if a[-1] == b[-1]:
+    if a[-1] == b[-1] and (a[-1] in ("a","e", "i", "o", "u") and b[-1] in ("a","e", "i", "o", "u")):
+        cost = -1
+    elif a[-1] == b[-1]:
         cost = 0
     else:
         cost = 1
@@ -120,20 +122,20 @@ def alliteration_dist(p1, p2, tune=[4, 1], dist=0):
     size = tune[0]
     weight = tune[1]
 
-
+    # do we need the +1 here?
     if weight == 1 and len(p1) < size:
-        dist = edit_dist(p1, p2[:len(p1)])
+        dist = edit_dist(p1, p2[:len(p1)+1])
 
     elif weight == 1 and len(p2) < size:
-        dist = edit_dist(p1[:len(p2)], p2)
+        dist = edit_dist(p1[:len(p2)+1], p2)
 
     elif len(p1) >= size and len(p2) >= size:
-        dist += edit_dist(p1[:size], p2[:size]) / weight
+        dist += edit_dist(p1[:size+1], p2[:size+1]) / weight
 
     else:
         return dist
 
-    return alliteration_dist(p1[size:], p2[size:], [size, weight + 1], dist)
+    return alliteration_dist(p1[size+1:], p2[size+1:], [size, weight + 1], dist)
 
 
 def phonetic_dist(p1, p2, alliteration=False, tune=[4, 1], ):
@@ -179,7 +181,7 @@ def metaphone_rhyme(word:str, all_phonetics, thresh = 10, alliteration = False):
         #only compares words that differ
         if word_info[0] != current_word[0]:
 
-            metaphone_dist = rdist.metaphone_dist(word_info[2], current_word[2], alliteration)
+            metaphone_dist = metaphone_dist(word_info[2], current_word[2], alliteration)
 
             # while matches is not full, populate list
             if len(matches) < thresh:
@@ -210,7 +212,7 @@ def phonetic_rhyme(word:str, all_phonetics, thresh = 10, alliteration = False):
         #only compares words that differ and long enough words
         if word_info[0] != current_word[0] and len(current_word[0]) > 3:
 
-            phon_dist = rdist.phonetic_dist(word_info[1], current_word[1], alliteration)
+            phon_dist = phonetic_dist(word_info[1], current_word[1], alliteration)
 
             # while matches is not full, populate list
             if len(matches) < thresh:
@@ -218,6 +220,44 @@ def phonetic_rhyme(word:str, all_phonetics, thresh = 10, alliteration = False):
             else:
                 if matches[thresh-1]["d"] > phon_dist:
                     matches[thresh-1] = {"word": current_word[0], "d": phon_dist, "Phon": current_word[1]}
+
+
+        matches = sorted(matches, key=lambda k: k['d'])
+
+    return matches
+
+def rhyme_list(word:str, thresh = 10, alliteration = False):
+
+    #get phonetic and metaphone of word to be compared
+    all_phonetics = get_all_phonetic_array()
+    try:
+        info = helper.get_by_id(word, word_relation_table)
+    except KeyError:
+        print("Word not in database")
+        return
+
+
+    word_info = [info['id'], info['phonetic'], met.doublemetaphone(info['id'])[0]]
+    print(word_info[1])
+    matches = []
+
+    # Compare distance between input word and all other viable words
+    for i in range(len(all_phonetics)):
+
+        current_word = all_phonetics[i]
+
+        #only compares words that differ and long enough words
+        if word_info[0] != current_word[0] and len(current_word[0]) > 3:
+
+            phon_dist = phonetic_dist(word_info[1], current_word[1], alliteration)
+            meta_dist = metaphone_dist(word_info[2], current_word[2], alliteration)
+
+            # while matches is not full, populate list
+            if len(matches) < thresh:
+                matches.append({"word": current_word[0], "d": phon_dist + meta_dist*0.5, "Phon": current_word[1]})
+            else:
+                if matches[thresh-1]["d"] > phon_dist:
+                    matches[thresh-1] = {"word": current_word[0], "d": phon_dist + meta_dist*0.5, "Phon": current_word[1]}
 
 
         matches = sorted(matches, key=lambda k: k['d'])
@@ -256,37 +296,6 @@ def get_all_phonetic_array():
     pass
     return dic
 
-def rhyme_list(word:str, thresh = 10, alliteration = False):
-
-    all_phonetics = get_all_phonetic_array()
-    #get phonetic and metaphone of word to be compared
-    info = helper.get_by_id(word, word_relation_table)
-    word_info = [info['id'], info['phonetic'], met.doublemetaphone(info['id'])[0]]
-    print(word_info[1])
-    matches = []
-
-    # Compare distance between input word and all other viable words
-    for i in range(len(all_phonetics)):
-
-        current_word = all_phonetics[i]
-
-        #only compares words that differ and long enough words
-        if word_info[0] != current_word[0] and len(current_word[0]) > 3:
-
-            phon_dist = rdist.phonetic_dist(word_info[1], current_word[1], alliteration)
-            metaphone_dist = rdist.metaphone_dist(word_info[2], current_word[2], alliteration)
-
-            # while matches is not full, populate list
-            if len(matches) < thresh:
-                matches.append({"word": current_word[0], "d": phon_dist + metaphone_dist*0.5, "Phon": current_word[1]})
-            else:
-                if matches[thresh-1]["d"] > phon_dist:
-                    matches[thresh-1] = {"word": current_word[0], "d": phon_dist + metaphone_dist*0.5, "Phon": current_word[1]}
-
-
-        matches = sorted(matches, key=lambda k: k['d'])
-
-    return matches
 # This is the old version of method
 """
 def rhyme_degree(phonetic_1, phonetic_2):
