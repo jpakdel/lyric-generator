@@ -163,6 +163,26 @@ def met_dist(word_1:str, word_2:str):
 
     return rdist.metaphone_dist(met.doublemetaphone(word_1)[0], met.doublemetaphone(word_2)[0])
 
+def dist(word_1:str, word_2:str, alliteration = False):
+
+    try:
+        info_1 = helper.get_by_id(word_1, word_relation_table)
+        info_2 = helper.get_by_id(word_2, word_relation_table)
+
+    except KeyError:
+        print("Word not in database")
+        return
+
+
+    word_info_1 = [info_1['id'], info_1['phonetic'], met.doublemetaphone(info_1['id'])[0]]
+    word_info_2 = [info_2['id'], info_2['phonetic'], met.doublemetaphone(info_2['id'])[0]]
+
+
+    phon_dist = phonetic_dist(word_info_1[1], word_info_2[1], alliteration)
+    meta_dist = metaphone_dist(word_info_1[2], word_info_2[2], alliteration)
+
+    return (phon_dist + meta_dist*0.5)
+
 def metaphone_rhyme(word:str, all_phonetics, thresh = 10, alliteration = False):
     """This function returns a list of the closest phonetic matches from a given word based on Metaphone encoding and a
     variation of minimum edit distance function"""
