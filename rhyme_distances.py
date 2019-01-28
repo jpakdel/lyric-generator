@@ -18,8 +18,6 @@ import metaphone as met
 import lyricsorter as lsorter
 import json
 
-
-
 word_relation_table = dynamodb.Table("WordRelation")
 
 
@@ -161,7 +159,7 @@ def phonetic_dist(p1, p2, alliteration=False, tune=[4, 1], ):
 
 def met_dist(word_1:str, word_2:str):
 
-    return rdist.metaphone_dist(met.doublemetaphone(word_1)[0], met.doublemetaphone(word_2)[0])
+    return metaphone_dist(met.doublemetaphone(word_1)[0], met.doublemetaphone(word_2)[0])
 
 def dist(word_1:str, word_2:str, alliteration = False):
 
@@ -181,7 +179,8 @@ def dist(word_1:str, word_2:str, alliteration = False):
     phon_dist = phonetic_dist(word_info_1[1], word_info_2[1], alliteration)
     meta_dist = metaphone_dist(word_info_1[2], word_info_2[2], alliteration)
 
-    return (phon_dist + meta_dist*0.5)
+    return adjust_range(phon_dist, meta_dist)
+
 
 def metaphone_rhyme(word:str, all_phonetics, thresh = 10, alliteration = False):
     """This function returns a list of the closest phonetic matches from a given word based on Metaphone encoding and a
@@ -246,6 +245,22 @@ def phonetic_rhyme(word:str, all_phonetics, thresh = 10, alliteration = False):
 
     return matches
 
+def adjust_range(d1, d2):
+    # Since we are not interested in rhymes that are too weak, we limit our analysis to the cases that yield
+    # distances smaller than 10. i.e. focus on range -3,10 for safe margin. This function returns a value between 0 and 1
+    #d1 is phon_dist and d2 is meta_dist
+
+    total_dist = d1 + d2 * 0.5
+
+    if total_dist >= 10:
+        return 1
+
+    elif total_dist <= -3:
+        return 0
+
+    else:
+        return (total_dist + 3)/13
+
 def rhyme_list(word:str, thresh = 10, alliteration = False):
 
     #get phonetic and metaphone of word to be compared
@@ -271,13 +286,14 @@ def rhyme_list(word:str, thresh = 10, alliteration = False):
 
             phon_dist = phonetic_dist(word_info[1], current_word[1], alliteration)
             meta_dist = metaphone_dist(word_info[2], current_word[2], alliteration)
+            total_dist = adjust_range(phon_dist, meta_dist)
 
             # while matches is not full, populate list
             if len(matches) < thresh:
-                matches.append({"word": current_word[0], "d": phon_dist + meta_dist*0.5, "Phon": current_word[1]})
+                matches.append({"word": current_word[0], "d":total_dist , "Phon": current_word[1]})
             else:
                 if matches[thresh-1]["d"] > phon_dist:
-                    matches[thresh-1] = {"word": current_word[0], "d": phon_dist + meta_dist*0.5, "Phon": current_word[1]}
+                    matches[thresh-1] = {"word": current_word[0], "d": total_dist, "Phon": current_word[1]}
 
 
         matches = sorted(matches, key=lambda k: k['d'])
