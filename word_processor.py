@@ -1,15 +1,22 @@
-import helper_methods
+#import helper_methods
+import numpy as np
 import slang_cleaner
-import scraper
+#import scraper
+
 import boto3
 import random
-from lyricsorter import get_song_url_list, hasNumbers, remove_paranthases
+import json
+import lyricsorter
+import helper_methods
+import time
+from helper_methods import word_relation_lookup, get_song_url_list, get_all_sentence_array, dprint, jprint
 dynamodb = boto3.resource("dynamodb")
 proxy_table = dynamodb.Table("Proxy")
 word_table = dynamodb.Table("Word")
 word_relation_table = dynamodb.Table("WordRelation")
 song_table = dynamodb.Table("Song")
-
+database_time =0
+other_time = 0
 
 def get_word_list():
     """
@@ -19,14 +26,13 @@ def get_word_list():
     word_list = []
     word_dict = {}
     word_dict_unsorted = {}
+
     for item in raw_words:
         word_list.append(str(item.get("id")))
         try:
-            word_dict_unsorted[str(item.get("id"))] = {"num_occurrences": int(item['num_occurrences']),
-                                                        "slang": item['slang']}
+            word_dict_unsorted[str(item.get("id"))] = item
         except TypeError:
-            word_dict_unsorted[str(item.get("id"))] = {"num_occurrences": int(item['num_occurrences']),
-                                                        "slang": item['slang']}
+            word_dict_unsorted[str(item.get("id"))] = item
             pass
     word_list = sorted(word_list)
 
@@ -36,7 +42,7 @@ def get_word_list():
 
 def fill_word_dict(x: int, y: int):
     """Uses a song url to look up the lyrics and get all the individual words from them"""
-    song_urls = get_song_url_list()
+    song_urls = lyricsorter.get_song_url_list()
     words = get_word_list()
     word_list = words[0]
     word_dict = words[1]
@@ -57,7 +63,7 @@ def fill_word_dict(x: int, y: int):
         lyric_list = lyrics.split("\n")
 
         output_list = []
-        print(link)
+        print(str(x))
         for item in lyric_list:
             # Take  out the punctuation
             item = item.replace("?", "")
@@ -66,11 +72,12 @@ def fill_word_dict(x: int, y: int):
             item = item.replace("\"", "")
             item = item.replace("-", " ")
             item = item.replace("!", "")
+            item = item.replace("+", "")
             item = item.lower()
 
             # We only want the line if it doesn't have numbers, and doesn't have a colon, which means its not actual lyrics
-            if item not in output_list and hasNumbers(item) is False and scraper.contains(item, ":") is False:
-                output_list.append(remove_paranthases(item).strip())
+            if item not in output_list and lyricsorter.hasNumbers(item) is False and scraper.contains(item, ":") is False:
+                output_list.append(lyricsorter.remove_paranthases(item).strip())
 
         for item in output_list:
             word_lines = item.split(" ")
@@ -92,12 +99,10 @@ def fill_word_dict(x: int, y: int):
                         if word in word_list:
                             num_occurrences = int(word_dict[word]["num_occurrences"]) + 1
                             word_dict[word]["num_occurrences"] = num_occurrences
-                            if link not in word_dict[word]["songs"]:
-                                word_dict[word]["songs"].append(link)
                             if word != slang_word and slang_word not in word_dict[word]["slang"]:
                                 word_dict[word]["slang"].append(slang_word)
-    for word in word_list:
-        print(word)
+    for i, word in enumerate(word_list):
+        print("Inserting word #{} of {}".format(str(i), str(len(word_list))))
         helper_methods.update_table(word_table, word, "num_occurrences", int(word_dict[word]["num_occurrences"]))
         helper_methods.update_table(word_table, word, "slang", word_dict[word]["slang"])
 
@@ -111,23 +116,22 @@ def setup_word_table():
         print(word)
         helper_methods.update_table(word_table, word, "num_occurrences", 0 )
         helper_methods.update_table(word_table, word, "slang", [])
-        helper_methods.update_table(word_table, word, "songs", [])
 
 def __reformat_word_table():
     """removes song attribute from all the words"""
     raw_words = list(word_table.scan()['Items'])
 
-    for word in raw_words:
+    for i, word in enumerate(raw_words):
+        print("word #{} of {} total words".format(str(i), str(len(raw_words))))
         Item = {'id': word['id'], 'num_occurrences': word['num_occurrences'], 'slang': word['slang']}
         word_table.put_item(
             Item=Item
         )
-        print(Item)
 
 
 def find_nonviable_words():
     """
-    Returns list of words we have found only once 
+    Returns list of words we have found only once
     """
     response = get_word_list()
     word_list = response[0]
@@ -137,43 +141,59 @@ def find_nonviable_words():
 
     numa = 0
     for word in word_list:
-        if  word_dict[word]['num_occurrences'] > 1:
-            pass
-        else:
-            non_viable_words+=1
+        try:
+            if word_dict[word]['num_occurrences'] > 2:
+                pass
+            else:
+                non_viable_words+=1
+                nonviableset.append(word)
+        except KeyError:
+            non_viable_words += 1
             nonviableset.append(word)
 
 
-
     return(nonviableset)
+
+def create_viable_word_dict():
+    viable_words = {"words": []}
+    with open("markhov_chains\\master_chain.json") as f:
+        data = json.load(f)
+    for d in data:
+        viable_words["words"].append(d)
+    with open('viable_words.json', 'w') as outfile:
+        json.dump(viable_words, outfile, indent=2)
+
 
 def find_viable_words():
     """
     Returns list and dict of words we have found more than one time in song lyrics
     """
-    response = get_word_list()
-    word_list = response[0]
-    word_dict = response[1]
-    viableset = []
-    viable_words = 0
+    try:
+        with open("viable_words.json") as f:
+            viableset = json.load(f)["words"]
+    except FileNotFoundError:
+        response = get_word_list()
+        word_list = response[0]
+        word_dict = response[1]
+        viableset = []
+        viable_words = 0
 
-    numa = 0
-    for word in word_list:
-        if  word_dict[word]['num_occurrences'] > 1:
-            viable_words += 1
-            viableset.append(word)
-        else:
-            pass
+        for word in word_list:
+            if word_dict[word]['num_occurrences'] > 2 and word.isalpha():
+                viable_words += 1
+                viableset.append(word)
+            else:
+                pass
     return(viableset)
 
 
 def find_word(words):
     """
     Scans through entire song lyrics to find which song and line they are found in
-    :param words: 
-    :return: 
+    :param words:
+    :return:
     """
-    song_urls = get_song_url_list()
+    song_urls = lyricsorter.get_song_url_list()
     for link in song_urls:
         response = song_table.get_item(
             Key={
@@ -245,7 +265,7 @@ def replace_words(words):
     given a dict of words and their replacements, replaces those words in the song lyrics
     :param words: dict of words and replacements
     """
-    song_urls = get_song_url_list()
+    song_urls = lyricsorter.get_song_url_list()
     for link in song_urls:
         response = song_table.get_item(
             Key={
@@ -278,237 +298,69 @@ def replace_words(words):
                         print(line)
                         helper_methods.update_table(song_table, link, "lyric_array", lyrics)
 
-def create_last_word_dict():
-    """
-    scans through all song lyrics and creates dict of words found at the end of sentences 
-    """
-    song_urls = get_song_url_list()
-    word_list = []
-    word_dict = {}
-    Item = {}
-    Item['id'] = "last_words"
-    Item['words'] = {}
-    for link in song_urls:
-        response = song_table.get_item(
-            Key={
-                'id': link
-            }
-        )
-        lyrics = []
-        try:
-            lyrics = response['Item']['lyric_array']
-        except KeyError:
-            pass
-        for line in lyrics:
-            if len(line) > 2:
-                last_word = line[len(line)-1]
-                print(line)
-                if last_word not in word_list:
-                    word_list.append(last_word)
-                if last_word not in word_dict:
-                    word_dict[last_word] = 1
-                else:
-                    word_dict[last_word] = word_dict[last_word] + 1
 
-    viable_words = find_viable_words()
-    for word in sorted(word_list):
-        if word in viable_words:
-            Item['words'][word] = word_dict[word]
-    word_relation_table.put_item(
-        Item=Item
-    )
-    print(Item)
+
 
 def __choose_last_word():
     """
     randomly returns a word from list of words we have found at the end of sentences
     """
-    response = word_relation_table.get_item(
-        Key = {
-            'id': "last_words"
-        }
-    )
-    last_words = dict(response['Item']['words'])
-    total = 26124
-    randint = random.randint(0,total)
+    global other_time
+    start = time.time()
+    try:
+        with open('last_word_dict.json') as f:
+            last_words = json.load(f)
 
+    except FileNotFoundError:
+        response = word_relation_table.get_item(
+            Key = {
+                'id': "last_words"
+            }
+        )
+
+        last_words = dict(response['Item']['words'])
+        last_words2 = {}
+        for item in last_words:
+            last_words2[item] = int(last_words[item])
+        data = {"data": last_words2}
+        #print(data)
+        with open('last_word_dict.json', 'w') as outfile:
+            json.dump(data, outfile, indent=4)
+
+    words = []
+    probabilities = []
     sum = 0
-    for word in last_words:
-        sum += last_words[word]
-        if sum >= randint:
-            return word
-
-def __probability_roll(dictionary: dict):
+    while True:
+        for word in last_words:
+            sum += last_words[word]
+        for word in last_words:
+            words.append(word)
+            probabilities.append(float(last_words[word]/sum))
+        rand_choice = np.random.choice(words, 1, probabilities)[0]
+        if helper_methods.check_phonetic_existance(rand_choice):
+            return np.random.choice(words, 1, probabilities)[0]
+def __probabilistic_roll(chain: dict):
     """
-    Given a dictionary of markov relations and probability, returns a word based on probability of its previous
-    occurence
-    :param dictionary: of markov relations
-    :return: pseudo-random word chosen
-    """
-    sum = 0
-    word_list = []
-    for item in dictionary:
-        if len(dictionary)==1:
-            return item
-        word_list.append(item)
-        sum+=int(dictionary[item])
-    if sum != 1:
-        randint = random.randint(1, sum)
-    else:
-        randit = 1
-    dice = 0
-    #print("randint: {}".format(randint))
-    for word in word_list:
-        dice+=int(dictionary[word])
-        #print(dice)
-        if dice >= randint:
-            return word
-        
-def build_word_relations():
-    """
-    builds markov chains of length 1 2 and 3 of all songs in the database
-    :return: 
-    """
-    song_urls = get_song_url_list()
-    viablewords = find_viable_words()
-    word_list = []
-    relation_dict = {}
-    for link in song_urls:
-        response = song_table.get_item(
-            Key={
-                'id': link
-            }
-        )
-        lyrics = []
-        try:
-            lyrics = response['Item']['lyric_array']
-        except KeyError:
-            pass
-        for index, line in enumerate(lyrics):
-            for index2, w in enumerate(line):
-                if w not in viablewords:
-                    lyrics[index][index2] = ""
-        for index, line in enumerate(lyrics):
-            for index2, w in enumerate(line):
-                __line_parse(index2, line, relation_dict, word_list)
+        Given a dictionary of markov relations and probability, returns a word based on probability of its previous
+        occurence
+        :param dictionary: of markov relations
+        :return: pseudo-random word chosen
+        """
+    sum = chain["count"]
+    words = []
+    probabilities = []
+    for word in chain["chain"]:
+        count = float((chain["chain"][word]["count"]))
 
-    for word in word_list:
-        Item1 = {
-            'id': str(word+"_1"),
-            "words": relation_dict[word][str(word+"_1")]
-        }
-        Item2 = {
-            'id': str(word + "_2"),
-            "words": relation_dict[word][str(word+"_2")]
-        }
-        Item3 = {
-            'id': str(word + "_3"),
-            "words": relation_dict[word][str(word+"_3")]
-        }
-        word_relation_table.put_item(
-            Item = Item1
-        )
-        word_relation_table.put_item(
-            Item=Item2
-        )
-        word_relation_table.put_item(
-            Item=Item3
-        )
+        if count ==0:
+            count +=1
 
-def __line_parse(index: int, line: list, dictionary: dict, word_list: list):
-    """
-    Parses a sentence to build markov chains of length 1 2 and 3
-    :param index: of word we want to build relations of
-    :param line: list of words, our sentence
-    :param dictionary: of markov chains
-    :param word_list: list of words we have
-    :return:
-    """
-    if index + 2 >= len(line):
-        return
-    word_1 = line[index + 2]
-    word_2 = line[index + 1]
-    word_3 = line[index]
+        probabilities.append(count/sum)
+        words.append(word)
+    #dprint(probabilities)
+    return np.random.choice(words, 1, probabilities)[0]
 
-    if word_1 == "" or word_2 == "" or word_3 == "":
-        return
 
-    if word_1 not in dictionary:
-        dictionary[word_1] = {
-            str(word_1 + "_1"): {
-
-            },
-            str(word_1 + "_2"): {
-
-            },
-            str(word_1 + "_3"): {
-
-            }
-        }
-    if word_2 not in dictionary:
-        dictionary[word_2] = {
-            str(word_2 + "_1"): {
-
-            },
-            str(word_2 + "_2"): {
-
-            },
-            str(word_2 + "_3"): {
-
-            }
-        }
-    if word_3 not in dictionary:
-        dictionary[word_3] = {
-            str(word_3 + "_1"): {
-
-            },
-            str(word_3 + "_2"): {
-
-            },
-            str(word_3 + "_3"): {
-
-            }
-        }
-    if word_1 not in word_list:
-        word_list.append(word_1)
-    if word_2 not in word_list:
-        word_list.append(word_2)
-    if word_3 not in word_list:
-        word_list.append(word_3)
-    """         word_3       word_2     word_1"""
-    if word_2 not in dictionary[word_1][str(word_1 + "_1")]:
-        dictionary[word_1][str(word_1 + "_1")][word_2] = 1
-    else:
-        dictionary[word_1][str(word_1 + "_1")][word_2] =dictionary[word_1][str(word_1 + "_1")][word_2]+1
-    if word_3 not in dictionary[word_1][str(word_1 + "_2")]:
-        dictionary[word_1][str(word_1 + "_2")][word_3] = 1
-    else:
-        dictionary[word_1][str(word_1 + "_2")][word_3] =dictionary[word_1][str(word_1 + "_2")][word_3]+1
-    if word_3 not in dictionary[word_2][str(word_2 + "_1")]:
-        dictionary[word_2][str(word_2 + "_1")][word_3] = 1
-    else:
-        dictionary[word_2][str(word_2 + "_1")][word_3] = dictionary[word_2][str(word_2 + "_1")][word_3]+1
-    if index + 3 >= len(line) or line[index+3] == "":
-        return
-    word_0 = line[index+3]
-    if word_0 not in dictionary:
-        dictionary[word_0] = {
-            str(word_0 + "_1"): {
-
-            },
-            str(word_0 + "_2"): {
-
-            },
-            str(word_0 + "_3"): {
-
-            }
-        }
-    if word_0 not in word_list:
-        word_list.append(word_0)
-    if word_3 not in dictionary[word_0][str(word_0 + "_3")]:
-        dictionary[word_0][str(word_0 + "_3")][word_3] = 1
-    else:
-        dictionary[word_0][str(word_0 + "_3")][word_3] = dictionary[word_0][str(word_0 + "_3")][word_3]+1
 
 def check_exists(id):
     response = word_relation_table.get_item(
@@ -523,263 +375,198 @@ def check_exists(id):
         print(id + " doesn't exist")
         return False
 
-def get_relation_dict(word: str, num: int):
-    """
-    Get markov chains of length=num and word=word
-    :return: dictionary of markov chains
-    """
-    label = str(word+"_"+str(num))
-
-    #These two cases are used in finding relations of "last" words, words we find at the end of a sentence
-    if num == -1:
-        label = str(word + "_last1")
-    elif num == -2:
-        label = str(word + "_last2")
-
-    response = word_relation_table.get_item(
-        Key = {
-            "id": label
-        }
-    )
-    if num < 0 and 'Item' not in response:
-        label = str(word + "_1")
-        response = word_relation_table.get_item(
-            Key = {
-                "id": label
-            }
-        )
-    return dict(response['Item']['words'])
-
-def __find_union(dicts: list):
-    """
-    Find union of a list of dictionaries and return those values in a new dictionary
-    """
-    union_list = []
-    while len(dicts)>1:
-        word_count = {}
-        final_dict = {}
-        for d in dicts:
-            for word in d:
-                if word not in word_count:
-                    word_count[word] = 1
-                else:
-                    word_count[word]=word_count[word]+1
-        for item in word_count:
-            if word_count[item] == len(dicts):
-                union_list.append(item)
-        for d in dicts:
-            for word in d:
-                if word in union_list:
-                    if word not in final_dict:
-                        final_dict[word]=d[word]
-                    else:
-                        final_dict[word]+=d[word]
-        if len(final_dict) >0:
-            return (final_dict)
-        else:
-
-            dicts = dicts[:len(dicts)-1]
+def __get_json_sum(data):
+    total = 0
+    for item in data:
+        total += data[item]
+    return total
 
 
-    return {}
+def count_duplicates(sent):
+    """Count the number of duplicate words in a sentence and return that int"""
+    d = {word: sent.count(word) for word in sent}
+    sum = 0
+    for val in d.values():
+        sum += (val-1)
+    return sum
 
+def construct_sentence(length=5, last_word=None):
 
-def build_sentence(length: int, input=None):
-    """
-    Primary function used to generate rap lyrics
-    :param length: length of sentence, must be >= 3
-    :param input: word you want to use at the end of a sentence, if not given then random word is chosen
-    """
-    last_word = __choose_last_word()
-    sentence = []
+    if last_word is None:
+        last_word = __choose_last_word()
+    if length < 3: length =3
+    chunk_size = 3
     i = 0
+    sent = []
     while i < length:
-        sentence.append("")
-        i += 1
+        sent.append('')
+        i +=1
+    i -=1
+    sent[i]=last_word
 
-    if input != None:
-        last_word = input
-    sentence[length - 1] = last_word
-    a = get_relation_dict(last_word, -1)
-    #print(a)
-    second_to_last_word = __probability_roll(a)
-    #print(second_to_last_word)
-    sentence[length - 2] = second_to_last_word
-    i = length-3
-    while i>=0:
-        word_1=sentence[i+2]
-        word_2 =sentence[i+1]
+    filename = "markhov_chains" +"\\" +  last_word + '.json'
+    #print(filename)
+    with open(filename) as f:
+        init_chain = json.load(f)
+    sent[i-1] = __probabilistic_roll(init_chain)
+    curr_chain = init_chain["chain"][sent[i - 1]]
+    sent[i-2] = __probabilistic_roll(curr_chain)
+    i = i-3
 
-        #words 2 steps away and one step away respectively
-        prev_words_2 = get_relation_dict(word_1, 2)
-        prev_words_1 = get_relation_dict(word_2, 1)
-        prev_word_list = [prev_words_1, prev_words_2]
+    while i >= 0:
+        dprint(last_word)
+        dprint(sent)
+        try: #try and do a chain of 4
+            with open("markhov_chains" +"\\" +  sent[i+3] + '.json') as f:
+                curr_chain = json.load(f)
+                curr_chain = curr_chain["chain"][sent[i+2]]["chain"][sent[i+1]]
+            dprint(i)
+            dprint(sent[i+1])
+            dprint(curr_chain)
+            sent[i] = __probabilistic_roll(curr_chain)
+            dprint("FOUR")
+        except (KeyError, ValueError) as e:  #so we settle for a chain of 3
+            with open("markhov_chains" +"\\" +  sent[i+2] + '.json') as f:
+                curr_chain = json.load(f)
+                curr_chain = curr_chain["chain"][sent[i + 1]]
+                last_word = sent[i+2]
+            dprint(last_word)
+            sent[i] = __probabilistic_roll(curr_chain)
 
-        if(i+3)<length:
-            word_0 = sentence[i+3]
-            prev_words_3 = get_relation_dict(word_0, 3)
-            prev_word_list.append(prev_words_3)
-
-        if (i + 4) < length:
-            word_00 = sentence[i + 4]
-            prev_words_4 = get_relation_dict(word_00, 4)
-            prev_word_list.append(prev_words_4)
-
-        try:
-            potential_words = __find_union(prev_word_list)
-            #print(len(potential_words))
-            sentence[i] = __probability_roll(potential_words)
-            #print("Union of {} spaces".format(str(len(prev_word_list))))
-        except IndexError:
-            sentence[i]=__probability_roll(prev_words_1)
-            print("Dice  Roll")
-        i-=1
-    print(sentence)
-
-def __line_parse_4(index: int, line: list, dictionary: dict, word_list: list):
-    """
-    Helper method for parsing sentences to create markov chains of length 4
-    :param index: of word we want to build chain of
-    :param line: list of words, our sentence
-    :param dictionary: of markov relations
-    :param word_list: list of words
-    :return:
-    """
-    if index + 4 >= len(line):
-        return
-    word_1 = line[index + 4]
-    word_2 = line[index + 3]
-    word_3 = line[index+2]
-    word_4 = line[index + 1]
-    word_5 = line[index]
-
-    if word_1 == "" or word_2 == "" or word_3 == "" or word_4 == "" or word_5 == "":
-        return
-
-    if word_1 not in dictionary:
-        dictionary[word_1] = {
-            str(word_1 + "_4"): {
-
-            }
-        }
-    if word_1 not in word_list:
-        word_list.append(word_1)
-
-    """word_5     word_4     word_3      word_2     word_1"""
-    if word_5 not in dictionary[word_1][str(word_1 + "_4")]:
-        dictionary[word_1][str(word_1 + "_4")][word_5] = 1
-    else:
-        dictionary[word_1][str(word_1 + "_4")][word_5] =dictionary[word_1][str(word_1 + "_4")][word_5]+1
-
-def build_word_relations_4():
-    """
-    Builds markov chain relations of size length 4
-    :return:
-    """
-    song_urls = get_song_url_list()
-    viablewords = find_viable_words()
-    word_list = []
-    relation_dict = {}
-
-    for link in song_urls:
-        print(link)
-        response = song_table.get_item(
-            Key={
-                'id': link
-            }
-        )
-        lyrics = []
-        try:
-            lyrics = response['Item']['lyric_array']
-        except KeyError:
-            pass
-        for index, line in enumerate(lyrics):
-            for index2, w in enumerate(line):
-                if w not in viablewords:
-                    lyrics[index][index2] = ""
-        for index, line in enumerate(lyrics):
-            for index2, w in enumerate(line):
-                __line_parse_4(index2, line, relation_dict, word_list)
-    print(len(word_list))
-    for word in word_list:
-        Item = {
-            'id': str(word + "_4"),
-            "words": relation_dict[word][str(word + "_4")]
-        }
-        word_relation_table.put_item(
-            Item=Item
-        )
-        print("added {}".format(word))
-
-def create_last_word_chains():
-    """
-    Used to create unique markov chains for words that are found at the end of sentences and are considered to be viable
-    """
-    song_urls = get_song_url_list()
-    word_list = []
-    word_dict = {}
-    Item = {}
-    Item['id'] = "last_words"
-    Item['words'] = {}
-    viable_words = find_viable_words()
-    for link in song_urls:
-        print(link)
-        response = song_table.get_item(
-            Key={
-                'id': link
-            }
-        )
-        lyrics = []
-        try:
-            lyrics = response['Item']['lyric_array']
-        except KeyError:
-            pass
-
-        for line in lyrics:
-            if len(line) > 2:
-                last_word = line[len(line)-1]
-                second_last_word = line[len(line)-2]
-                third_last_word = line[len(line)-3]
-                #print(line)
-                if last_word in viable_words and second_last_word in viable_words:
-                    if last_word not in word_list:
-                        word_list.append(last_word)
-                    if last_word not in word_dict:
-                        word_dict[last_word] = {
-                            "1":{
-
-                            },
-                            "2":{
-
-                            }
-                        }
-                    if second_last_word not in word_dict[last_word]["1"]:
-                        word_dict[last_word]["1"][second_last_word] = 1
-                    else:
-                        word_dict[last_word]["1"][second_last_word] =word_dict[last_word]["1"][second_last_word] +1
-                    if third_last_word in viable_words:
-                        if third_last_word not in word_dict[last_word]["2"]:
-                            word_dict[last_word]["2"][third_last_word] = 1
-                        else:
-                            word_dict[last_word]["2"][third_last_word] = word_dict[last_word]["2"][third_last_word] + 1
+            dprint("THREE")
+        i -=1
+        pass
+    #print(sent)
+    return sent
 
 
-    print(word_dict)
-    for word in word_list:
+def get_first_words():
+    pass
+
+
+
+
+
+
+def delete_non_viable_words():
+    for word in find_nonviable_words():
         print(word)
-        label_1 = str(word + "_last1")
-        label_2 = str(word + "_last2")
-        item1 = {
-            "id": label_1,
-            "words": word_dict[word]["1"]
-        }
-        item2 = {
-            "id": label_2,
-            "words": word_dict[word]["2"]
-        }
-        word_relation_table.put_item(
-            Item=item1
+        word_table.delete_item(
+            Key={
+                'id': word,
+            }
         )
-        word_relation_table.put_item(
-            Item=item2
-        )
+    pass
+
+def get_max_json(a):
+    m = 0
+    n = 0
+    one = " "
+    two = " "
+    for i, item in enumerate(a):
+        if a[item] > m:
+            if i > 0:
+                n = m
+                two = one
+            m = a[item]
+            one = item
+        if a[item] > n and item != one:
+            n= a[item]
+            two = item
+
+    return [one, two]
+
+
+
+def assign_word_specificities():
+    """Modifies the data.json file that contains parts of speech tagging such that it chooses the highest 2 frequency
+    """
+    with open('data.json') as f:
+        data = json.load(f)
+
+    gen_types = ["RB","CD", "EX", "DT", "CC", "IN","MD","PDT", "RP", "UH", "TO", "PRP", "WDT", "WP", "WP$","PRP$", "POS", "WRB"]
+    for item in data:
+        print(item)
+        curr_pos = get_max_json(data[item])
+        special = True
+        for pos in curr_pos:
+
+            if len(pos)>1 and pos in gen_types:
+                special = False
+
+        print(special)
+
+        if special:
+            helper_methods.update_table(word_table, item, "u", 1)
+
+def write_markov(num=100):
+    i=0
+    sents = {"sents": []}
+    while i<num:
+        try:
+            sent = construct_sentence(6)
+            sents["sents"].append(sent)
+            i+=1
+        except ValueError:
+            pass
+        except KeyError:
+            pass
+    with open('sample_sentences.json', 'w') as outfile:
+        json.dump(sents, outfile, indent=4)
+
+def construct_sentence_pair(length=5, last_word=None):
+    try:
+        first_sent = construct_sentence(length, last_word)
+        last_word = first_sent[len(first_sent)-1]
+        try:
+            rhymes = helper_methods.get_rhymes(last_word)
+        except FileNotFoundError:
+            return None
+        sents ={last_word: {smush(first_sent): first_sent}}
+        num_elems = 1
+        for j in range(5):
+            sent = construct_sentence(length, last_word)
+            if smush(sent) not in sents[last_word]:
+                sents[last_word][smush(sent)] = sent
+                num_elems+=1
+        for i in range(15):
+            try:
+                if len(rhymes[0])>0:
+                   # print("first")
+                    last_word = random.choice(rhymes[0])
+                else:
+                    #print("second")
+                    #print(rhymes[1])
+                    last_word = random.choice(rhymes[1])
+                sent = construct_sentence(length, last_word)
+                if last_word not in sents:
+                    sents[last_word] = {}
+                if smush(sent) not in sents[last_word]:
+                    sents[last_word][smush(sent)] = sent
+                    num_elems += 1
+
+            except (FileNotFoundError, KeyError, IndexError) as e:
+                pass
+        if num_elems > 3:
+            return sents
+    except (KeyError, ValueError, IndexError) as e:
+        return None
+def smush(sent):
+    output = ""
+    for word in sent:
+        output +=word
+    return output
+#build_sentence(5)
+#write_markov(500)
+def test_markov(num=5, num2=5):
+    for i in range(num):
+        print(i)
+        try:
+            sents = construct_sentence_pair(num2)
+            if sents is not None:
+                jprint(sents)
+        except ValueError:
+            pass
+
+
+#test_markov()
