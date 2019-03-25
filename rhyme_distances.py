@@ -6,20 +6,22 @@ words. It will be used to determine how well two words rhyme
 @author: Adm
 """
 
-import helper_methods as helper
+from helper_methods import jprint
 import math
 import word_processor as wp
-import scraper
+
 import helper_methods as helper
-import rhyme_distances as rdist
-import scrapping_methods as sm
+
+
 import boto3
 import metaphone as met
-import lyricsorter as lsorter
+
 import json
 
 dynamodb = boto3.resource("dynamodb")
 word_relation_table = dynamodb.Table("WordRelation")
+with open("rhymes\\master_rhymes.json") as f:
+    confirmed_rhymes = json.load(f)
 
 def get_all_phonetic_array():
     # I have this option set to true because I already saved it in JSON
@@ -182,11 +184,13 @@ def dist(word_1: str, word_2: str, alliteration=False):
     try:
         info_1 = all_phonetics[word_1]
         info_2 = all_phonetics[word_2]
+        info_1 = clean_phonetics(info_1)
+        info_2 = clean_phonetics(info_2)
     except KeyError:
-        print(word_1)
-        print(word_2)
-        print("Word not in database")
-        return -1
+        #print(word_1)
+        #print(word_2)
+        #print("Word not in database")
+        return 1
 
     phon_dist = phonetic_dist(info_1[0], info_2[0], alliteration)
     meta_dist = metaphone_dist(info_1[1], info_2[1], alliteration)
@@ -277,14 +281,16 @@ def adjust_range(d1, d2):
         return (total_dist + 3) / 13
 
 
-def rhyme_list(word: str, thresh=10, alliteration=False):
+def rhyme_list(word: str, thresh=30, alliteration=False):
     # get phonetic and metaphone of word to be compared
 
     try:
         info = all_phonetics[word]
+        info = clean_phonetics(info)
+        #jprint(info)
     except KeyError:
         print("Word not in database")
-        return
+        return None
 
     matches = []
 
@@ -294,7 +300,7 @@ def rhyme_list(word: str, thresh=10, alliteration=False):
 
         current_word = id[i]
         current_info = all_phonetics[current_word]
-
+        current_info = clean_phonetics(current_info)
         # only compares words that differ and long enough words
         if word != current_word and len(current_word) > 3:
 
@@ -313,4 +319,60 @@ def rhyme_list(word: str, thresh=10, alliteration=False):
 
     return matches
 
+def clean_phonetics(info):
+    consonants = ['b', 'c', 'd', 'f', 'g', 'h', 'j', 'k', 'l', 'm', 'n', 'p', 'q', 'r', 's', 't', 'v', 'w', 'x', 'y', 'z']
+    found_vowel = False
+    first_syllable = ""
+    other = ['[', '\'', '\"']
+    sound = info[0]
+    #print(sound)
+    sound = sound
+    for letter in sound:
+        if letter not in consonants and letter not in other:
+            found_vowel = True
+        if found_vowel and letter not in other:
+            first_syllable += letter
+        if letter in other:
+            first_syllable += letter
+    #print(first_syllable)
+    info[0] = first_syllable
 
+    return info
+
+def populate_rhymes():
+    viable_words = wp.find_viable_words()
+    master_rhymes = {}
+    i = 10000
+    while i < 14000:
+        print(i)
+        word = viable_words[i]
+        master_rhymes[word] = {}
+        data = rhyme_list(word)
+        if data is not None:
+            for d in data:
+                w = d["word"]
+                distance = d["d"]
+                if distance <= 0.30:
+                    master_rhymes[word][w] = distance
+            with open('rhymes\\' + word +  '.json', 'w') as outfile:
+                json.dump(master_rhymes[word], outfile, indent=4)
+        i+=1
+
+#jprint(rhyme_list("trio"))
+#populate_rhymes()
+
+def get_rhymes(word):
+    global confirmed_rhymes
+    rhymes = confirmed_rhymes[word].keys()
+    output = [[],[]]
+    for item in rhymes:
+        output[0].append(item)
+    with open ("rhymes\\" + word + ".json") as f:
+        data = json.load(f)
+
+    for item in data:
+        output[1].append(item)
+    return output
+
+
+#get_rhymes("ass")
