@@ -1,0 +1,737 @@
+
+import json
+import boto3
+import nltk
+from gensim.models import Word2Vec
+import lyricsorter
+from word_processor import get_word_list, build_sentence
+from helper_methods import jprint, get_all_sentence_array
+from word_processor import find_viable_words, find_nonviable_words
+dynamodb = boto3.resource("dynamodb")
+proxy_table = dynamodb.Table("Proxy")
+word_table = dynamodb.Table("Word")
+word_relation_table = dynamodb.Table("WordRelation")
+song_table = dynamodb.Table("Song")
+
+
+model = Word2Vec.load('model.bin')
+def train_model():
+    song_urls = lyricsorter.get_song_url_list()
+    sentencelist = []
+    for i, link in enumerate(song_urls):
+        ss = []
+        response = song_table.get_item(
+            Key={
+                'id': link
+            }
+        )
+        lyrics = []
+        try:
+            lyrics = response['Item']['lyric_array']
+        except KeyError:
+            pass
+        for line in lyrics:
+            if len(line)>2:
+                sentencelist.append(line)
+        print(i)
+
+    sentences = sentencelist
+    # train model
+    model = Word2Vec(sentences, min_count=1)
+    # summarize the loaded model
+    print(model)
+    # summarize vocabulary
+    words = list(model.wv.vocab)
+    print(words)
+    # save model
+    model.save('model.bin')
+    # load model
+    new_model = Word2Vec.load('model.bin')
+    #print(new_model)
+
+def get_syn(word):
+    global model
+    syns = list(model.wv.most_similar(positive=[word], topn=50))
+
+    output = []
+    v_words = find_viable_words()
+    for item in syns:
+        if item[0] in v_words and item[1] > 0.6:
+            output.append(item[0])
+
+    print(len(output))
+    return(output)
+
+
+
+def get_all_sentences():
+    song_urls = lyricsorter.get_song_url_list()
+    sentences = ""
+    for i, link in enumerate(song_urls):
+        ss = []
+        response = song_table.get_item(
+            Key={
+                'id': link
+            }
+        )
+        lyrics = []
+        try:
+            lyrics = response['Item']['lyric_array']
+        except KeyError:
+            pass
+        for line in lyrics:
+            if len(line)>2:
+
+                for word in line:
+                    sentences += " "
+                    sentences+=(str(word))
+
+                sentences += "."
+        print(i)
+
+        #print(sentences)
+
+    return sentences
+
+
+"""
+corpus = {
+
+    words: [
+        [apple],
+        [banna]
+    ]       
+    
+}
+
+"""
+
+def create_all_last_word_markov_chains():
+
+    all_sents = get_all_sentence_array()
+    viable_words = find_viable_words()
+    all_markhov_chains = initialize_empty_markhov_set(viable_words)
+
+    for x, sent in enumerate(all_sents):
+        #first we clean all the non viable words from the sentences
+        print(x)
+        for k, word in enumerate(sent):
+            if word not in viable_words:
+                sent[k] = ""
+
+        if len(sent) > 3:
+            # now we look at the sentence from the back to make chains
+            j = len(sent) - 1
+
+            word = sent[j]
+            #print(word)
+            #last viable word in markov chain in relation to front of chain
+            last_word_index = chain_is_viable(sent, j)
+            if last_word_index > -1:
+                curr_chain = all_markhov_chains[word]
+                chunk = sent[last_word_index:j+1]
+                all_markhov_chains[word]= update_chain(chunk, curr_chain)
+                #jprint(all_markhov_chains[word])
+
+
+    with open('last_word_chains\master_chain.json', 'w') as outfile:
+        json.dump(all_markhov_chains, outfile, indent=4)
+    for i, word in enumerate(viable_words):
+        print(str(i) + "  p" )
+        with open('last_word_chains' + "\\" + word + ".json", 'w') as outfile:
+            json.dump(all_markhov_chains[word], outfile, indent=4)
+
+def create_all_first_word_markov_chains():
+
+    all_sents = get_all_sentence_array()
+    viable_words = find_viable_words()
+    all_markhov_chains = initialize_empty_markhov_set(viable_words)
+
+    for x, sent in enumerate(all_sents):
+        #first we clean all the non viable words from the sentences
+        print(x)
+        for k, word in enumerate(sent):
+            if word not in viable_words:
+                sent[k] = ""
+
+        if len(sent) > 3:
+            # now we look at the sentence from the back to make chains
+            j = 0
+            word = sent[j]
+            #print(word)
+            #last viable word in markov chain in relation to front of chain
+            last_word_index = chain_is_viable(sent, j)
+            if last_word_index > -1:
+                curr_chain = all_markhov_chains[word]
+                chunk = sent[last_word_index:j+1]
+                all_markhov_chains[word]= update_chain(chunk, curr_chain)
+                #jprint(all_markhov_chains[word])
+
+
+    with open('first_word_chains\master_chain.json', 'w') as outfile:
+        json.dump(all_markhov_chains, outfile, indent=4)
+    for i, word in enumerate(viable_words):
+        print(str(i) + "  p" )
+        with open('first_word_chains' + "\\" + word + ".json", 'w') as outfile:
+            json.dump(all_markhov_chains[word], outfile, indent=4)
+
+
+def create_all_markov_chains():
+
+    all_sents = get_all_sentence_array()
+    viable_words = find_viable_words()
+    all_markhov_chains = initialize_empty_markhov_set(viable_words)
+
+    for x, sent in enumerate(all_sents):
+        #first we clean all the non viable words from the sentences
+        print(x)
+        for k, word in enumerate(sent):
+            if word not in viable_words:
+                sent[k] = ""
+
+        if len(sent) > 3 and len(sent) < 13:
+            # now we look at the sentence from the back to make chains
+            j = len(sent) - 1
+            while j >= 0:
+                word = sent[j]
+                #print(word)
+                #last viable word in markov chain in relation to front of chain
+                last_word_index = chain_is_viable(sent, j)
+                if last_word_index > -1:
+                    curr_chain = all_markhov_chains[word]
+                    chunk = sent[last_word_index:j+1]
+                    all_markhov_chains[word]= update_chain(chunk, curr_chain)
+                    #jprint(all_markhov_chains[word])
+                j -=1
+
+    with open('markhov_chains\master_chain.json', 'w') as outfile:
+        json.dump(all_markhov_chains, outfile, indent=4)
+    for i, word in enumerate(viable_words):
+        print(str(i) + "  p" )
+        with open('markhov_chains' + "\\" + word + ".json", 'w') as outfile:
+            json.dump(all_markhov_chains[word], outfile, indent=4)
+
+
+
+def initialize_empty_markhov_set(viable_words):
+    all_markhov_chains = {}
+    for word in viable_words:
+        all_markhov_chains[word] = create_empty_chain()
+    return all_markhov_chains
+
+def update_chain(sent, markhov_chain):
+    i = len(sent)-1
+
+    subchain = markhov_chain
+    while i > 0:
+        word = sent[i]
+        next_word = sent[i-1]
+        subchain["count"] +=1
+
+        if next_word not in subchain["chain"]:
+            subchain["chain"][next_word] = create_empty_chain()
+        subchain = subchain["chain"][next_word]
+
+        i-=1
+    return markhov_chain
+
+def create_empty_chain():
+    empty_chain = {"count":0, "chain":{}}
+    return empty_chain
+
+def chain_is_viable(sent, j, option=False):
+    """ Check to see if chain is viable for us to record
+    returns -1 if not viable, if it is then it returns index of
+    last viable word in chain to maximize chain length
+    option variable automatically set to false, denoting the backwards markov chains
+    we use, if it's set to true then that means we are creating forwards markov chains"""
+
+    if option:
+        if "" in sent[j:j+3]:
+            return -1
+
+        while j < len(sent):
+            if sent[j] is "":
+                return j-1
+            j +=1
+        return j-1
+    else:
+        #we only record chains of length 4 or greater
+        if j < 2:
+            return -1
+
+        if "" in sent[j-2:j+1]:
+            return -1
+        j = j-2
+        while j >=0:
+            if sent[j] is "":
+                return j+1
+            j -=1
+        return j+1
+
+
+
+#sent = ['i', 'was', 'just', 'sitting', '', 'a', 'cell', 'playing', 'solitaire']
+# print(chain_is_viable(sent, 0, True))
+#create_all_first_word_markov_chains()
+
+
+def sent_to_pos(sent):
+    """turn sentence to its parts of speech"""
+    print(sent)
+    sent_string = ""
+    for word in sent:
+        sent_string += word
+        sent_string += " "
+
+    tokens = nltk.word_tokenize(sent_string)
+    tokens = nltk.pos_tag(tokens)
+    print(tokens)
+
+def test_sent_pos():
+    with open("sample_sentences.json") as f:
+        sents = json.load(f)['sents']
+
+    for sent in sents:
+        sent_to_pos(sent)
+
+
+#test_sent_pos()
+
+def syllable_count(word):
+    word = word.lower()
+    count = 0
+    vowels = "aeiouy"
+    if word[0] in vowels:
+        count += 1
+    for index in range(1, len(word)):
+        if word[index] in vowels and word[index - 1] not in vowels:
+            count += 1
+    if word.endswith("e"):
+        count -= 1
+    if count == 0:
+        count += 1
+    return count
+
+
+def create_meter_corpus():
+    s_array = get_all_sentence_array()
+    corpus = {}
+    i = 3
+
+    #initialize the corpus with lengths of sentences
+    while i <13:
+        corpus[str(i)] = {}
+        i+=1
+
+    for sent in s_array:
+        meter = create_meter_from_sent(sent)
+        meter_length = str(len(meter.split("meter-")[1].split(" ")))
+        if meter not in corpus[meter_length]:
+            corpus[meter_length][meter] = 1
+        else:
+            corpus[meter_length][meter] += 1
+
+    with open('meter-data.json', 'w') as outfile:
+        json.dump(corpus, outfile, indent=4)
+
+
+def create_meter_from_sent(sent):
+    """used in create_meter_corpus for recording meters
+    """
+    output = "meter-"
+    for i, word in enumerate(sent):
+        s = str(syllable_count(word))
+        output+=(s)
+        output += " "
+    output = output[:len(output)-1]
+
+    return(output)
+
+def create_meter_array_from_sent(sent):
+    """used in compare_sents_meter to numerically
+    :param sent:
+    :return:
+    """
+    output = []
+    for i, word in enumerate(sent):
+        s = syllable_count(word)
+        output.append(s)
+    return(output)
+
+def compare_sents_meter(sent1, sent2):
+    #this function accepts two sentences to compare their meter relation
+    length_difference = abs(len(sent1)-len(sent2))
+    meter_difference = 0
+    for i, word in enumerate(sent1):
+        try:
+            #word length 1 and 2
+            w_l2 = syllable_count(sent2[i])
+            w_l1 = syllable_count(word)
+            meter_difference+=abs(w_l1-w_l2)
+        except IndexError:
+            pass
+    return([meter_difference, length_difference])
+
+def create_meter_comparison_corpus():
+    sent_array = get_all_sentence_array()
+    corpus ={
+        "length_diff":{
+
+        },
+        "meter_diff":{
+
+        }
+    }
+
+    for i, sent in enumerate(sent_array):
+        print(str(len(sent_array)-i))
+
+        try:
+            sent2 = sent_array[i+1]
+            if len(sent2)>2 and len(sent2)<13 and len(sent)>2 and len(sent)<13:
+                m_diff, l_diff = compare_sents_meter(sent, sent2)
+                if str(m_diff)not in corpus["meter_diff"]:
+                    corpus["meter_diff"][str(m_diff)] = 1
+                else:
+                    corpus["meter_diff"][str(m_diff)]+=1
+                if str(l_diff)not in corpus["length_diff"]:
+                    corpus["length_diff"][str(l_diff)] = 1
+                else:
+                    corpus["length_diff"][str(l_diff)]+=1
+        except IndexError:
+            pass
+    with open('meter-analysis-data.json', 'w') as outfile:
+        json.dump(corpus, outfile, indent=4)
+
+
+def get_unique_words(sents):
+    #output sentences
+    out_sents = []
+    count =-1
+    for sent in sents:
+        out_sents.append([])
+        count+=1
+        for word in sent:
+            if is_unique(word):
+                out_sents[count].append(word)
+        if is_unique(word):
+            out_sents[count].append(word)
+    return out_sents
+
+def is_unique(word):
+    try:
+        word_entry = word_dict[word]
+        if 'u' in word_entry:
+            return True
+    except KeyError:
+        pass
+    return False
+
+def create_meaning_corp_intra():
+    global model
+    sent_array = get_all_sentence_array()
+
+    corpus = {
+        "word_match": {
+
+                "50%": {
+
+                },
+                "75%": {
+
+                },
+                "90%": {
+
+                }
+        },
+        "word_list":{
+
+        },
+        "sent_count": {
+
+        },
+        "u_count": {
+
+        },
+        "comp_count": {
+
+        }
+    }
+
+    for i, sent in enumerate(sent_array):
+        #check to see sentence is valid length
+        if len(sent) > 2 and len(sent) < 13:
+
+            #get list of unique words in sent
+            #print(sent)
+            unique_sent = get_unique_words([sent])
+            unique_sent2 = get_unique_words([sent])[0]
+
+            l = len(unique_sent2)
+            # l_s stand for and is length_string, used for JSON purposes
+            l_s = str(l)
+
+            # increment number of sentences
+            if l_s not in corpus['sent_count']:
+                corpus['sent_count'][l_s] = 0
+            corpus['sent_count'][l_s] += 1
+
+            for item in unique_sent:
+                # increment number of sentences
+                if l_s not in corpus['u_count']:
+                    corpus['u_count'][l_s] = 0
+                corpus['u_count'][l_s] += 1
+
+                #this part does basic information about sentences and invidual words, not with word comaparisons
+                for j, word in enumerate(list(set(item))):
+                    # existance check
+                    if word not in corpus["word_list"]:
+                        corpus["word_list"][word] = create_entry()
+
+                    if l_s not in corpus["word_list"][word]["sent_count"]:
+                        corpus["word_list"][word]["sent_count"][l_s] = 0
+                    corpus["word_list"][word]["sent_count"][l_s] += 1
+                #this part does comparisons between words in a sentence
+                for j, word in enumerate(item):
+                    k = j+1
+                    #print(str(j) + " " + str(k) + " " + str(l))
+
+                    #compare jth word to all of the other k's
+                    while k < l:
+                        next_word = item[k]
+                        if l_s not in corpus["comp_count"]:
+                            corpus['comp_count'][l_s] = 0
+                        corpus['comp_count'][l_s] += 1
+                        similarity = model.wv.similarity(word, next_word)
+                        if l_s not in corpus["word_list"][word]["comp_count"]:
+                            corpus["word_list"][word]["comp_count"][l_s] = 0
+                        corpus["word_list"][word]["comp_count"][l_s] +=1
+                        if l_s not in corpus["word_list"][next_word]["comp_count"]:
+                            corpus["word_list"][next_word]["comp_count"][l_s] = 0
+                        corpus["word_list"][next_word]["comp_count"][l_s] += 1
+                        #print("WORD1: {}   WORD2: {}   SIMILARITY: {}".format(word, next_word, str(similarity)))
+                        #we check if the comparison is greater than 3 different threshold values, and if so,
+                        #we increment the number of total matches, and the number of matches found in both
+                        #the first and second word being compared
+
+                        if similarity >= 0.5:
+                            if l_s not in corpus["word_match"]["50%"]:
+                                corpus["word_match"]["50%"][l_s] = 0
+                            corpus["word_match"]["50%"][l_s]  += 1
+
+                            if l_s not in corpus["word_list"][word]["50%"]:
+                                corpus["word_list"][word]["50%"][l_s] = 0
+                            corpus["word_list"][word]["50%"][l_s] +=1
+
+                            if l_s not in corpus["word_list"][next_word]["50%"]:
+                                corpus["word_list"][next_word]["50%"][l_s] = 0
+                            corpus["word_list"][next_word]["50%"][l_s] +=1
+
+                        if similarity >= 0.75:
+                            if l_s not in corpus["word_match"]["75%"]:
+                                corpus["word_match"]["75%"][l_s] = 0
+                            corpus["word_match"]["75%"][l_s] += 1
+
+                            if l_s not in corpus["word_list"][word]["75%"]:
+                                corpus["word_list"][word]["75%"][l_s] = 0
+                            corpus["word_list"][word]["75%"][l_s] += 1
+
+                            if l_s not in corpus["word_list"][next_word]["75%"]:
+                                corpus["word_list"][next_word]["75%"][l_s] = 0
+                            corpus["word_list"][next_word]["75%"][l_s] += 1
+
+                        if similarity >= 0.9:
+                            if l_s not in corpus["word_match"]["90%"]:
+                                corpus["word_match"]["90%"][l_s] = 0
+                            corpus["word_match"]["90%"][l_s] += 1
+
+                            if l_s not in corpus["word_list"][word]["90%"]:
+                                corpus["word_list"][word]["90%"][l_s] = 0
+                            corpus["word_list"][word]["90%"][l_s] += 1
+
+                            if l_s not in corpus["word_list"][next_word]["90%"]:
+                                corpus["word_list"][next_word]["90%"][l_s] = 0
+                            corpus["word_list"][next_word]["90%"][l_s] += 1
+
+                        k+=1
+
+    with open('intra_meaning_corpus.json', 'w') as outfile:
+        json.dump(corpus, outfile, indent=4)
+    pass
+
+def create_meaning_corp_extra():
+    sent_array = get_all_sentence_array()
+
+    corpus = {
+        "word_match": {
+
+                "50%": {
+
+                },
+                "75%": {
+
+                },
+                "90%": {
+
+                }
+        },
+        "word_list":{
+
+        },
+        "sent_count": {
+
+        },
+        "u_count": {
+
+        },
+        "comp_count": {
+
+        }
+    }
+    model = Word2Vec.load('model.bin')
+    for i, sent in enumerate(sent_array):
+        #check to see sentence is valid length
+        if len(sent) > 2 and len(sent) < 13 and i < len(sent_array)-2 and len(sent_array[i+1]) > 2 and len(sent_array[i+1]) < 13:
+            q = i +1
+            #get list of unique words in sent
+            #print(sent)
+            unique_sent = get_unique_words([sent])
+            unique_sent2 = get_unique_words([sent])[0]
+
+            l = len(unique_sent2)
+            # l_s stand for and is length_string, used for JSON purposes
+            l_s = str(l)
+            next_sent = sent_array[q]
+            next_sent = get_unique_words([next_sent])
+            print(next_sent)
+            next_sent2 = next_sent[0]
+            l_2 = str(len(next_sent2))
+            # increment number of sentences
+            if l_s not in corpus['sent_count']:
+                corpus['sent_count'][l_s] = 0
+            corpus['sent_count'][l_s] += 1
+
+            for item in unique_sent:
+                # increment number of sentences
+                if l_s not in corpus['u_count']:
+                    corpus['u_count'][l_s] = 0
+                corpus['u_count'][l_s] += 1
+
+                #this part does basic information about sentences and invidual words, not with word comaparisons
+                for j, word in enumerate(list(set(item))):
+                    # existance check
+                    if word not in corpus["word_list"]:
+                        corpus["word_list"][word] = create_entry()
+
+                    if l_s not in corpus["word_list"][word]["sent_count"]:
+                        corpus["word_list"][word]["sent_count"][l_s] = 0
+                    corpus["word_list"][word]["sent_count"][l_s] += 1
+                l_s = str(len(unique_sent2)+len(next_sent2))
+                print(l_s)
+                #this part does comparisons between words in two sentences
+                for j, word in enumerate(item):
+
+                    #print(str(j) + " " + str(k) + " " + str(l))
+
+                    #compare jth word to all of the other k's
+
+                    for next_word in next_sent2:
+
+                        if l_s not in corpus["comp_count"]:
+                            corpus['comp_count'][l_s] = 0
+                        corpus['comp_count'][l_s] += 1
+                        similarity = model.wv.similarity(word, next_word)
+                        if l_s not in corpus["word_list"][word]["comp_count"]:
+                            corpus["word_list"][word]["comp_count"][l_s] = 0
+                        if next_word not in corpus["word_list"]:
+                            corpus["word_list"][next_word] = create_entry()
+                        corpus["word_list"][word]["comp_count"][l_s] +=1
+                        if l_s not in corpus["word_list"][next_word]["comp_count"]:
+                            corpus["word_list"][next_word]["comp_count"][l_s] = 0
+                        corpus["word_list"][next_word]["comp_count"][l_s] += 1
+                        #print("WORD1: {}   WORD2: {}   SIMILARITY: {}".format(word, next_word, str(similarity)))
+                        #we check if the comparison is greater than 3 different threshold values, and if so,
+                        #we increment the number of total matches, and the number of matches found in both
+                        #the first and second word being compared
+
+                        if similarity >= 0.5:
+                            if l_s not in corpus["word_match"]["50%"]:
+                                corpus["word_match"]["50%"][l_s] = 0
+                            corpus["word_match"]["50%"][l_s]  += 1
+
+                            if l_s not in corpus["word_list"][word]["50%"]:
+                                corpus["word_list"][word]["50%"][l_s] = 0
+                            corpus["word_list"][word]["50%"][l_s] +=1
+
+                            if l_s not in corpus["word_list"][next_word]["50%"]:
+                                corpus["word_list"][next_word]["50%"][l_s] = 0
+                            corpus["word_list"][next_word]["50%"][l_s] +=1
+
+                        if similarity >= 0.75:
+                            if l_s not in corpus["word_match"]["75%"]:
+                                corpus["word_match"]["75%"][l_s] = 0
+                            corpus["word_match"]["75%"][l_s] += 1
+
+                            if l_s not in corpus["word_list"][word]["75%"]:
+                                corpus["word_list"][word]["75%"][l_s] = 0
+                            corpus["word_list"][word]["75%"][l_s] += 1
+
+                            if l_s not in corpus["word_list"][next_word]["75%"]:
+                                corpus["word_list"][next_word]["75%"][l_s] = 0
+                            corpus["word_list"][next_word]["75%"][l_s] += 1
+
+                        if similarity >= 0.9:
+                            if l_s not in corpus["word_match"]["90%"]:
+                                corpus["word_match"]["90%"][l_s] = 0
+                            corpus["word_match"]["90%"][l_s] += 1
+
+                            if l_s not in corpus["word_list"][word]["90%"]:
+                                corpus["word_list"][word]["90%"][l_s] = 0
+                            corpus["word_list"][word]["90%"][l_s] += 1
+
+                            if l_s not in corpus["word_list"][next_word]["90%"]:
+                                corpus["word_list"][next_word]["90%"][l_s] = 0
+                            corpus["word_list"][next_word]["90%"][l_s] += 1
+
+    with open('extra_meaning_corpus.json', 'w') as outfile:
+        json.dump(corpus, outfile, indent=4)
+    pass
+
+def create_entry(params):
+    item = {
+        "comp_count": {
+
+        },
+        "sent_count": {
+
+        },
+                params[0]: {
+
+                },
+                 params[1]: {
+
+                },
+                 params[2]: {
+
+                }
+    }
+    return item
+
+def rank(sentence, thresh):
+    global model
+    count =0
+
+    for i, word in enumerate(sentence):
+        j = i+1
+        while j < len(sentence)-1:
+            similarity = model.wv.similarity(word, sentence[j])
+            if similarity> thresh and similarity != 1:
+                count +=similarity*10
+            j+=1
+    return float(count/len(sentence))
+
+
+
+
+
