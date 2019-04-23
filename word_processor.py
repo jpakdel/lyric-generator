@@ -12,7 +12,9 @@ import time
 from helper_methods import word_relation_lookup, get_song_url_list, get_all_sentence_array, dprint, jprint
 dynamodb = boto3.resource("dynamodb")
 proxy_table = dynamodb.Table("Proxy")
+lyric_table = dynamodb.Table("Lyric")
 word_table = dynamodb.Table("Word")
+rhyme_table = dynamodb.Table("Rhyme")
 word_relation_table = dynamodb.Table("WordRelation")
 song_table = dynamodb.Table("Song")
 database_time =0
@@ -300,17 +302,19 @@ def replace_words(words):
 
 
 
+with open('last_word_dict.json') as f:
+    last_words = json.load(f)
+
 
 def __choose_last_word():
     """
     randomly returns a word from list of words we have found at the end of sentences
     """
-    global other_time
+    global other_time, last_words
     start = time.time()
     try:
-        with open('last_word_dict.json') as f:
-            last_words = json.load(f)
 
+        last_words
     except FileNotFoundError:
         response = word_relation_table.get_item(
             Key = {
@@ -390,6 +394,7 @@ def count_duplicates(sent):
         sum += (val-1)
     return sum
 
+
 def construct_sentence(length=5, last_word=None):
 
     if last_word is None:
@@ -416,26 +421,27 @@ def construct_sentence(length=5, last_word=None):
     while i >= 0:
         dprint(last_word)
         dprint(sent)
-        try: #try and do a chain of 4
-            with open("markhov_chains" +"\\" +  sent[i+3] + '.json') as f:
-                curr_chain = json.load(f)
-                curr_chain = curr_chain["chain"][sent[i+2]]["chain"][sent[i+1]]
-            dprint(i)
-            dprint(sent[i+1])
-            dprint(curr_chain)
-            sent[i] = __probabilistic_roll(curr_chain)
-            dprint("FOUR")
-        except (KeyError, ValueError) as e:  #so we settle for a chain of 3
-            with open("markhov_chains" +"\\" +  sent[i+2] + '.json') as f:
-                curr_chain = json.load(f)
-                curr_chain = curr_chain["chain"][sent[i + 1]]
-                last_word = sent[i+2]
+        # try: #try and do a chain of 4
+        #     raise KeyError
+        #     with open("markhov_chains" +"\\" +  sent[i+3] + '.json') as f:
+        #         curr_chain = json.load(f)
+        #         curr_chain = curr_chain["chain"][sent[i+2]]["chain"][sent[i+1]]
+        #     dprint(i)
+        #     dprint(sent[i+1])
+        #     dprint(curr_chain)
+        #     sent[i] = __probabilistic_roll(curr_chain)
+        #     dprint("FOUR")
+        # except (KeyError, ValueError) as e:  #so we settle for a chain of 3
+        with open("markhov_chains" +"\\" +  sent[i+2] + '.json') as f:
+            curr_chain = json.load(f)
+            curr_chain = curr_chain["chain"][sent[i + 1]]
+            last_word = sent[i+2]
             dprint(last_word)
             sent[i] = __probabilistic_roll(curr_chain)
 
             dprint("THREE")
         i -=1
-        pass
+
     #print(sent)
     return sent
 
@@ -506,6 +512,7 @@ def write_markov(num=100):
         try:
             sent = construct_sentence(6)
             sents["sents"].append(sent)
+            print(sent)
             i+=1
         except ValueError:
             pass
@@ -514,43 +521,75 @@ def write_markov(num=100):
     with open('sample_sentences.json', 'w') as outfile:
         json.dump(sents, outfile, indent=4)
 
-def construct_sentence_pair(length=5, last_word=None):
+def construct_sentence_pair(length=7, last_word=None):
+    first_sent = construct_sentence(length, last_word)
+    last_word = first_sent[len(first_sent)-1]
     try:
-        first_sent = construct_sentence(length, last_word)
-        last_word = first_sent[len(first_sent)-1]
+        rhymes = helper_methods.get_rhymes(last_word)
+        print(rhymes)
+        last_word = random.choice(rhymes[1])
+    except FileNotFoundError:
+        print("FNFEEE")
+        return None
+
+    sents ={last_word: {smush(first_sent): first_sent}}
+    num_elems = 1
+    for j in range(13):
         try:
-            rhymes = helper_methods.get_rhymes(last_word)
-        except FileNotFoundError:
-            return None
-        sents ={last_word: {smush(first_sent): first_sent}}
-        num_elems = 1
-        for j in range(5):
             sent = construct_sentence(length, last_word)
             if smush(sent) not in sents[last_word]:
                 sents[last_word][smush(sent)] = sent
+                print(sent)
                 num_elems+=1
-        for i in range(15):
-            try:
-                if len(rhymes[0])>0:
-                   # print("first")
+        except (FileNotFoundError, KeyError, IndexError, ValueError) as e:
+            pass
+        # except (FileNotFoundError):
+        #     print("FILENOTFOUND")
+        # except( KeyError):
+        #     print("KEYERROR")
+        # except IndexError:
+        #     print("IndexError")
+
+    for i in range(35):
+
+        try:
+
+            if len(rhymes[0])>0:
+               # print("first")
+                dice = random.randint(0, 1000)
+
+                if (dice%2 == 1):
                     last_word = random.choice(rhymes[0])
                 else:
-                    #print("second")
-                    #print(rhymes[1])
                     last_word = random.choice(rhymes[1])
-                sent = construct_sentence(length, last_word)
-                if last_word not in sents:
-                    sents[last_word] = {}
-                if smush(sent) not in sents[last_word]:
-                    sents[last_word][smush(sent)] = sent
-                    num_elems += 1
+            else:
+                #print("second")
+                #print(rhymes[1])
+                last_word = random.choice(rhymes[1])
+                #print(last_word)
+            sent = construct_sentence(length, last_word)
 
-            except (FileNotFoundError, KeyError, IndexError) as e:
-                pass
-        if num_elems > 3:
-            return sents
-    except (KeyError, ValueError, IndexError) as e:
-        return None
+            if last_word not in sents:
+                sents[last_word] = {}
+
+            if smush(sent) not in sents[last_word]:
+                sents[last_word][smush(sent)] = sent
+                num_elems += 1
+                print(sent)
+
+        except (FileNotFoundError, KeyError, IndexError, ValueError) as e:
+            pass
+        # except (FileNotFoundError):
+        #     print("FILENOTFOUND")
+        # except( KeyError):
+        #     print("KEYERROR")
+        # except IndexError:
+        #     print("IndexError")
+
+
+    if num_elems > 3:
+        return sents
+
 def smush(sent):
     output = ""
     for word in sent:
@@ -558,9 +597,19 @@ def smush(sent):
     return output
 #build_sentence(5)
 #write_markov(500)
-def test_markov(num=5, num2=5):
+def test_markov(num=7, num2=5):
     for i in range(num):
         print(i)
+        # try:
+        #     construct_sentence_pair(7)
+        # except FileNotFoundError:
+        #     pass
+        # except KeyError:
+        #     pass
+        # except ValueError:
+        #     pass
+        # except IndexError:
+        #     pass
         try:
             sents = construct_sentence_pair(num2)
             if sents is not None:
@@ -568,5 +617,62 @@ def test_markov(num=5, num2=5):
         except ValueError:
             pass
 
+#construct_sentence_pair()
 
+#write_markov()
 #test_markov()
+
+
+def get_all_sents(last_word):
+    sents = {}
+    k = 0
+    for i in range(500):
+        length = random.randint(4,6)
+
+        try:
+            sent = construct_sentence(length, last_word)
+            if smush(sent) not in sents:
+                sents[smush(sent)] = sent
+                k=k+1
+                print(k)
+
+        except (FileNotFoundError, KeyError, IndexError, ValueError) as e:
+            pass
+    return sents
+
+
+def populate_sentence_db():
+    with open('last_word_dict.json') as f:
+        last_words = dict(json.load(f))
+
+    i = 133
+    while i < len(list(last_words.keys())):
+        print(i)
+        word = list(last_words.keys())[i]
+        print(word)
+
+        if helper_methods.check_phonetic_existance(word):
+            sents = get_all_sents(word)
+            response = lyric_table.get_item(
+                Key={
+                    'id': -1
+                }
+            )
+
+            total = int(response['Item']['total'])
+            start = total+1
+            for j, sent in enumerate(sents):
+
+                total+=1
+                print(j)
+                print("")
+                Item = {'id': total, 'sent': sents[sent], 'len': len(sent)}
+                lyric_table.put_item(
+                    Item=Item
+                )
+            lyric_table.put_item(Item={'id': -1, 'total': total})
+            helper_methods.update_table(rhyme_table,word,"sent_ids", [start, total])
+        else:
+            print("{} has no phonetic representation".format(word))
+
+        i += 1
