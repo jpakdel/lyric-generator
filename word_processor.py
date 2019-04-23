@@ -445,6 +445,61 @@ def construct_sentence(length=5, last_word=None):
     #print(sent)
     return sent
 
+batch_write = True
+
+if batch_write:
+    with open("markhov_chains" + "\\" + "master_chain.json") as f:
+        master_chain = json.load(f)
+
+
+def batch_construct_sentence(length=5, last_word=None):
+
+    global master_chain
+
+    if last_word is None:
+        last_word = __choose_last_word()
+    if length < 3: length =3
+    chunk_size = 3
+    i = 0
+    sent = []
+    while i < length:
+        sent.append('')
+        i +=1
+    i -=1
+    sent[i]=last_word
+
+    init_chain = master_chain[last_word]
+    sent[i-1] = __probabilistic_roll(init_chain)
+    curr_chain = init_chain["chain"][sent[i - 1]]
+    sent[i-2] = __probabilistic_roll(curr_chain)
+    i = i-3
+
+    while i >= 0:
+        dprint(last_word)
+        dprint(sent)
+        # try: #try and do a chain of 4
+        #     raise KeyError
+        #     with open("markhov_chains" +"\\" +  sent[i+3] + '.json') as f:
+        #         curr_chain = json.load(f)
+        #         curr_chain = curr_chain["chain"][sent[i+2]]["chain"][sent[i+1]]
+        #     dprint(i)
+        #     dprint(sent[i+1])
+        #     dprint(curr_chain)
+        #     sent[i] = __probabilistic_roll(curr_chain)
+        #     dprint("FOUR")
+        # except (KeyError, ValueError) as e:  #so we settle for a chain of 3
+
+        curr_chain = master_chain[sent[i+2]]
+        curr_chain = curr_chain["chain"][sent[i + 1]]
+        last_word = sent[i+2]
+        dprint(last_word)
+        sent[i] = __probabilistic_roll(curr_chain)
+
+        dprint("THREE")
+        i -=1
+
+    #print(sent)
+    return sent
 
 def get_first_words():
     pass
@@ -630,7 +685,7 @@ def get_all_sents(last_word):
         length = random.randint(4,6)
 
         try:
-            sent = construct_sentence(length, last_word)
+            sent = batch_construct_sentence(length, last_word)
             if smush(sent) not in sents:
                 sents[smush(sent)] = sent
                 k=k+1
@@ -645,7 +700,7 @@ def populate_sentence_db():
     with open('last_word_dict.json') as f:
         last_words = dict(json.load(f))
 
-    i = 133
+    i = 151
     while i < len(list(last_words.keys())):
         print(i)
         word = list(last_words.keys())[i]
@@ -661,18 +716,22 @@ def populate_sentence_db():
 
             total = int(response['Item']['total'])
             start = total+1
-            for j, sent in enumerate(sents):
+            with lyric_table.batch_writer() as batch:
+                for j, sent in enumerate(sents):
 
-                total+=1
-                print(j)
-                print("")
-                Item = {'id': total, 'sent': sents[sent], 'len': len(sent)}
-                lyric_table.put_item(
-                    Item=Item
-                )
-            lyric_table.put_item(Item={'id': -1, 'total': total})
-            helper_methods.update_table(rhyme_table,word,"sent_ids", [start, total])
+                    total+=1
+                    print(j)
+                    print("")
+                    Item = {'id': total, 'sent': sents[sent], 'len': len(sent)}
+
+                    batch.put_item(
+                        Item=Item
+                    )
+                batch.put_item(Item={'id': -1, 'total': total})
+                helper_methods.update_table(rhyme_table,word,"sent_ids", [start, total])
         else:
             print("{} has no phonetic representation".format(word))
 
         i += 1
+
+populate_sentence_db()
