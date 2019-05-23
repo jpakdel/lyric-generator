@@ -9,10 +9,12 @@ import json
 import lyricsorter
 import helper_methods
 import time
+import botocore
 from helper_methods import word_relation_lookup, get_song_url_list, get_all_sentence_array, dprint, jprint
 dynamodb = boto3.resource("dynamodb")
 proxy_table = dynamodb.Table("Proxy")
 lyric_table = dynamodb.Table("Lyric")
+lyric_link_table = dynamodb.Table("LyricLink")
 word_table = dynamodb.Table("Word")
 rhyme_table = dynamodb.Table("Rhyme")
 word_relation_table = dynamodb.Table("WordRelation")
@@ -445,8 +447,7 @@ def construct_sentence(length=5, last_word=None):
     #print(sent)
     return sent
 
-batch_write = True
-
+batch_write = False
 if batch_write:
     with open("markhov_chains" + "\\" + "master_chain.json") as f:
         master_chain = json.load(f)
@@ -681,7 +682,7 @@ def test_markov(num=7, num2=5):
 def get_all_sents(last_word):
     sents = {}
     k = 0
-    for i in range(500):
+    for i in range(1000):
         length = random.randint(4,6)
 
         try:
@@ -689,7 +690,7 @@ def get_all_sents(last_word):
             if smush(sent) not in sents:
                 sents[smush(sent)] = sent
                 k=k+1
-                print(k)
+
 
         except (FileNotFoundError, KeyError, IndexError, ValueError) as e:
             pass
@@ -699,39 +700,93 @@ def get_all_sents(last_word):
 def populate_sentence_db():
     with open('last_word_dict.json') as f:
         last_words = dict(json.load(f))
-
-    i = 151
+    sent_list = []
+    i = 1
     while i < len(list(last_words.keys())):
+        try:
+            word = list(last_words.keys())[i]
+            print(word)
+            print(i)
+
+            if helper_methods.check_phonetic_existance(word):
+                sents = get_all_sents(word)
+                response = lyric_table.get_item(
+                    Key={
+                        'id': -1
+                    }
+                )
+
+                total = int(response['Item']['total'])
+                start = total+1
+
+                with lyric_table.batch_writer() as batch:
+                    for j, sent in enumerate(sents):
+
+                        total+=1
+
+                        Item = {'id': total, 'sent': sents[sent], 'len': len(sents[sent])}
+                        for w in sents[sent]:
+                            Item[w] = 1
+                        batch.put_item(
+                            Item=Item
+                        )
+                        sent_list.append(sents[sent])
+                    batch.put_item(Item={'id': -1, 'total': total})
+                    helper_methods.update_table(rhyme_table,word,"sent_ids", [start, total])
+            else:
+                print("{} has no phonetic representation".format(word))
+
+            i += 1
+        except botocore.exceptions.ClientError:
+            i += 1
+    output_sents = {"sents": sent_list}
+    with open('sent_array.json', 'w') as outfile:
+        json.dump(sent_list, outfile, indent=2)
+
+def create_word_db_links():
+    with open('sent_array.json') as f:
+        sents = dict(json.load(f))
+    output = {}
+    sents = sents["sents"]
+    for i, sent in enumerate(sents):
         print(i)
-        word = list(last_words.keys())[i]
-        print(word)
+        index = i+2
+        words = list(set(sent))
+        for word in words:
+            if word not in output:
+                output[word] = {"count": 0, "ids": []}
+            output[word]["count"] +=1
+            output[word]["ids"].append(index)
 
-        if helper_methods.check_phonetic_existance(word):
-            sents = get_all_sents(word)
-            response = lyric_table.get_item(
-                Key={
-                    'id': -1
-                }
-            )
+    with open('word_db_map.json', 'w') as outfile:
+        json.dump(output, outfile, indent=2)
 
-            total = int(response['Item']['total'])
-            start = total+1
-            with lyric_table.batch_writer() as batch:
-                for j, sent in enumerate(sents):
+def update_word_db_links():
+    with open('word_db_map.json') as f:
+        data = dict(json.load(f))
+    for i, word in enumerate(data):
+        print(i)
+        if data[word]["count"] > 1000:
+            while data[word]["count"] % 1000 != 0:
+                data[word]["ids"].append(random.choice(data[word]["ids"]))
+                data[word]["count"] +=1
 
-                    total+=1
-                    print(j)
-                    print("")
-                    Item = {'id': total, 'sent': sents[sent], 'len': len(sent)}
 
-                    batch.put_item(
-                        Item=Item
-                    )
-                batch.put_item(Item={'id': -1, 'total': total})
-                helper_methods.update_table(rhyme_table,word,"sent_ids", [start, total])
-        else:
-            print("{} has no phonetic representation".format(word))
+    with open('word_db_map_2.json', 'w') as outfile:
+        json.dump(data, outfile, indent=2)
 
-        i += 1
+def insert_word_db_mappings():
+    with open('word_db_map_2.json') as f:
+        data = dict(json.load(f))
+    with lyric_link_table.batch_writer() as batch:
+        for i, word in enumerate(data):
+            print(i)
+            num_entries = int(max(int(data[word]["count"]/1000), 1))
+            batch.put_item(Item={'id': word, 'count': num_entries})
+            for j in range(num_entries):
+                batch.put_item(Item={'id': word+"-"+str(j+1), 'links': data[word]["ids"][j*1000:(j+1)*1000]})
 
-populate_sentence_db()
+
+
+
+insert_word_db_mappings()
