@@ -1,0 +1,13 @@
+We scraped, cleaned, and stored over 7,000 songs worth of rap lyrics in our AWS Dynamo database.  This was a very lengthy process, as the lyrics were user generated, often having different spellings for the same word, as well as a lot of slang.  We had to make sure that different versions of words were mapped to the same word, to increase the accuracy of the lyrics we generated.
+
+Each word we found in our lyric database that surpassed a minimum count of four occurrences were added to a word database, where we created phonetic representations of each word.  Based on these phonetic representations, we created functions to measure the sound similarity of words, including rhymes, slant rhymes, start sound (think ‘sauce’ and ‘sausage’), and alliteration.  
+
+Concurrently, we trained a word2vec model based on our lyric corpus to be able to understand the similarity and relationships between the words we had in our database in the context of rap lyrics.
+
+Using these metrics, we analyzed the entire corpus of rap lyrics in an effort to determine what combination of word2vec and audio similarity of words makes for a good sentence.  Based on this data, we created a ranking algorithm for sentences to try and be able to dynamically create a large number of n sentences in order to choose the best one.  What we found was that many good rap sentences didn’t rank highly in these metrics, and that the relationship between sentences was much more important than the relationship between the words in a sentences.  
+
+The last thing we did was develop our project into a working web app for people to use.  We turned all of our code into microservices using flask and heroku.  We realized it would be very time consuming and costly to have to dynamically create sentences for users, so instead, we created over five million rap sentences all at once, storing them in our database.  We did this by going through each word in our database, and creating approximately 700 ending with each word. 
+
+Users of our app you can choose to either create songs, sentence by sentence.  Every even numbered sentence rhymes with every odd numbered sentence.  Users have the option to manually edit sentences, as well as reroll sentences and get different ones with the same rhyming restriction should they want to.   Lastly, using the word2vec word embeddings, users are able to make songs pertaining to any topic or word choice, so long as it is in our database, which holds some approximate 12,000 words.
+
+http://pinla.herokuapp.com/jinni_main
